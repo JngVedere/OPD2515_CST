@@ -21,6 +21,8 @@ public final class SetupActivity extends Activity {
     private RadioGroup modeGroup;
     private int touchId, colorId;
     private boolean waitingAccessibility;
+    /** True while controls are synced from stored state; listeners then must not act as if the user changed them. */
+    private boolean syncing;
     private final BroadcastReceiver serviceState = new BroadcastReceiver() {
         @Override public void onReceive(Context context, Intent intent) { refresh(); }
     };
@@ -59,6 +61,7 @@ public final class SetupActivity extends Activity {
         modeGroup.addView(touch); modeGroup.addView(color); body.addView(modeGroup);
         modeGroup.check(BarService.nativeMode(this) ? colorId : touchId);
         modeGroup.setOnCheckedChangeListener((group, selected) -> {
+            if (syncing) return;
             BarService.setMode(this, selected == colorId ? BarService.NATIVE : BarService.TOUCH);
             if (selected == colorId && BarService.enabled(this)) approveIfNeeded();
             refresh();
@@ -67,11 +70,14 @@ public final class SetupActivity extends Activity {
 
         heading("전원 버튼");
         powerSwitch = toggle("전원 버튼 길게 눌러 작은 Gemini 열기", BarService.power(this), (view, checked) -> {
+            if (syncing) return;
             BarService.setPower(this, checked);
-            if (checked) approveIfNeeded();
+            if (checked) { approveIfNeeded(); repairVoice(false); }
             refresh();
         });
         text("전원 버튼을 길게 누르면 Gemini 앱 전체 화면이 아닌 작은 Gemini 창을 엽니다. 하단 실행 방식과 따로 켜고 끌 수 있으며, 잠금 화면에서는 동작하지 않습니다. 접근성, 기기 로그 권한과 ColorOS의 전원 버튼 음성 비서 호출 설정이 필요합니다.", 14);
+        button("Google 음성 연결 다시 시작", () -> repairVoice(true));
+        text("Google이 음성 서비스로 선택되어 있어도 시스템 연결이 끊겨 작은 Gemini가 뜨지 않을 수 있습니다. 그래서 '사용 시작'을 누르거나 이 전원 버튼 기능을 켤 때, Google이 선택되어 있고 보안 설정 쓰기 권한이 있으면 한 번 다시 연결합니다. 이미 선택된 Google 음성 서비스만 약 0.35초 해제했다가 정확히 같은 값으로 되돌리며, 다른 어시스턴트로 바꾸지 않고 전원 버튼을 누를 때마다 하지는 않습니다. 감지 중인데도 뜨지 않으면 이 버튼을 누르세요. '감지 중'과 요청 수락은 Gemini 창이 실제로 떴다는 확인이 아닙니다.", 14);
 
         heading("기기 로그");
         button("기기 로그 접근 승인 요청", () -> { BarService.requestApproval(this); status.postDelayed(this::refresh, 500); });
@@ -106,7 +112,8 @@ public final class SetupActivity extends Activity {
 
         heading("추가 설정");
         bootSwitch = toggle("재부팅 후 자동 복구", BootRecovery.wanted(this), (view, checked) -> {
-            if (checked && !BootRecovery.permitted(this)) {
+            if (syncing) return;
+            if (checked &&!BootRecovery.permitted(this)) {
                 ((Switch) view).setChecked(false);
                 Toast.makeText(this, "아래 최초 ADB 설정 안내를 확인하고 권한을 먼저 허용해주세요.", Toast.LENGTH_LONG).show();
                 return;
@@ -256,7 +263,38 @@ public final class SetupActivity extends Activity {
     private void begin() {
         BarService.start(this);
         if (!BarService.granted(this)) { waitingAccessibility = true; openAccessibility(); }
-        else { approveIfNeeded(); status.postDelayed(this::refresh, 250); }
+        else { approveIfNeeded(); repairVoice(false); status.postDelayed(this::refresh, 250); }
+    }
+
+    /**
+     * Explicit user actions only (repair button, Start, enabling the power option): rebinds the already
+     * selected Google voice service once, never another assistant and never per gesture. Activation calls
+     * stay silent when the power option is off, WSS is missing or Google is not selected.
+     */
+    private void repairVoice(boolean button) {
+        if (button && !BootRecovery.permitted(this)) {
+            Toast.makeText(this, "보안 설정 쓰기 권한이 필요합니다. 최초 ADB 설정 안내를 확인해주세요.", Toast.LENGTH_LONG).show();
+            return;
+        }
+        if (!VoiceRepair.activationWanted(this, button || BarService.power(this))) {
+            if (button) Toast.makeText(this, "Google이 음성 서비스로 선택되어 있지 않아 변경하지 않았습니다. 기본 어시스턴트 설정을 확인해주세요.", Toast.LENGTH_LONG).show();
+            return;
+        }
+        if (VoiceRepair.busy()) {
+            if (button) Toast.makeText(this, "이미 Google 음성 연결을 다시 시작하는 중입니다.", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        Context app = getApplicationContext();
+        new Thread(() -> {
+            boolean restored;
+            try { restored = VoiceRepair.run(app); }
+            catch (RuntimeException unexpected) { restored = false; }
+            if (!restored && VoiceRepair.busy()) return; // A concurrent request owns this repair and reports it.
+            boolean result = restored;
+            runOnUiThread(() -> Toast.makeText(app, result
+                ? "Google 음성 서비스 연결을 다시 시작했습니다. 잠시 후 전원 버튼을 길게 눌러 확인해주세요."
+                : "Google 음성 연결을 다시 시작하지 못했습니다. 기본 어시스턴트 설정에서 Google 선택을 확인해주세요.", Toast.LENGTH_LONG).show());
+        }, "PadVoiceRepair").start();
     }
 
     private void openAccessibility() {
@@ -266,7 +304,8 @@ public final class SetupActivity extends Activity {
 
     private void refresh() {
         boolean nativeMode = BarService.nativeMode(this);
-        modeGroup.check(nativeMode ? colorId : touchId);
+        syncing = true;
+        try { modeGroup.check(nativeMode ? colorId : touchId); } finally { syncing = false; }
         areaSwitch.setEnabled(!nativeMode);
         String state;
         if (!BarService.granted(this)) state = "접근성 설정 필요";
@@ -306,8 +345,11 @@ public final class SetupActivity extends Activity {
 
     @Override public void onResume() {
         super.onResume();
-        bootSwitch.setChecked(BootRecovery.wanted(this));
-        powerSwitch.setChecked(BarService.power(this));
+        syncing = true;
+        try {
+            bootSwitch.setChecked(BootRecovery.wanted(this));
+            powerSwitch.setChecked(BarService.power(this));
+        } finally { syncing = false; }
         BarService.refreshConfiguration(); refresh(); applyRecentVisibility();
         status.postDelayed(this::refresh, 300);
         BarService.showPreview(areaSwitch.isChecked());

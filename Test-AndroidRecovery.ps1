@@ -70,11 +70,13 @@ public class SharedPreferences {
     public boolean contains(String key) { return values.containsKey(key); }
     public boolean getBoolean(String key, boolean fallback) { return (Boolean)values.getOrDefault(key, fallback); }
     public int getInt(String key, int fallback) { return (Integer)values.getOrDefault(key, fallback); }
+    public String getString(String key, String fallback) { return (String)values.getOrDefault(key, fallback); }
     public Editor edit() { return new Editor(); }
     public final class Editor {
         private final Map<String,Object> pending = new HashMap<>();
         public Editor putBoolean(String key, boolean value) { pending.put(key, value); return this; }
         public Editor putInt(String key, int value) { pending.put(key, value); return this; }
+        public Editor putString(String key, String value) { pending.put(key, value); return this; }
         public Editor remove(String key) { pending.put(key, null); return this; }
         public boolean commit() {
             if (failNextCommit) { failNextCommit = false; return false; }
@@ -94,7 +96,7 @@ public class Context {
     private final Map<String,SharedPreferences> credentialPrefs = new HashMap<>();
     private final Map<String,SharedPreferences> devicePrefs = new HashMap<>();
     public final Map<String,String> secure = new HashMap<>();
-    public int permission, bootCount = 4, writes, failIntWrites, failStringWrites;
+    public int permission, bootCount = 4, writes, failIntWrites, failStringWrites, throwReads, throwStringWrites, throwAfterStringWrites;
     public boolean credentialLocked;
     public Runnable beforeWrite;
     public Context() { root = this; deviceProtected = false; }
@@ -114,7 +116,10 @@ import android.content.Context;
 public class Settings {
     public static final class Secure {
         public static final String ENABLED_ACCESSIBILITY_SERVICES = "services", ACCESSIBILITY_ENABLED = "enabled";
-        public static String getString(Context context, String key) { return context.secure.get(key); }
+        public static String getString(Context context, String key) {
+            if (context.throwReads > 0) { context.throwReads--; throw new SecurityException("read denied"); }
+            return context.secure.get(key);
+        }
         public static int getInt(Context context, String key, int fallback) {
             String value = getString(context,key); return value == null ? fallback : Integer.parseInt(value);
         }
@@ -122,7 +127,10 @@ public class Settings {
             context.writes++;
             if (context.beforeWrite != null) context.beforeWrite.run();
             if (context.failStringWrites > 0) { context.failStringWrites--; return false; }
-            context.secure.put(key,value); return true;
+            if (context.throwStringWrites > 0) { context.throwStringWrites--; throw new SecurityException("write denied"); }
+            context.secure.put(key,value);
+            if (context.throwAfterStringWrites > 0) { context.throwAfterStringWrites--; throw new IllegalStateException("write landed, then failed"); }
+            return true;
         }
         public static boolean putInt(Context context, String key, int value) {
             context.writes++;
@@ -378,6 +386,119 @@ public final class StateHarness {
             && !bar(context).contains(BarGesture.ORIGINAL),"Native mode preserves an unknown OEM setting value");
         context = new Context();
         check(!BarGesture.enableBreenoGesture(context) && gesture(context)==-1 && context.writes==0,"Native mode does not invent a missing OEM setting");
+
+        String google = "com.google.android.googlequicksearchbox/com.google.android.voiceinteraction.GsaVoiceInteractionService";
+        String other = "com.example.assist/.Vis";
+        check(VoiceRepair.googleSelected(google),"Selected Google voice service is repairable");
+        check(!VoiceRepair.googleSelected(null) && !VoiceRepair.googleSelected("") && !VoiceRepair.googleSelected("com.google.android.googlequicksearchbox/")
+            && !VoiceRepair.googleSelected("com.google.android.googlequicksearchbox.evil/.Vis")
+            && !VoiceRepair.googleSelected("com.google.android.googlequicksearchbox/.A:com.example/.B")
+            && !VoiceRepair.googleSelected(other),"Only exactly one Google component is repairable");
+
+        // First activation (Start / power option on): wanted only with power on, WSS and Google selected.
+        Context voice = new Context();
+        voice.secure.put(VoiceRepair.KEY,google);
+        check(VoiceRepair.activationWanted(voice,true),"First activation with Google selected and WSS rebinds once");
+        check(!VoiceRepair.activationWanted(voice,false),"Power option off: activation never rebinds");
+        voice.permission = -1;
+        check(!VoiceRepair.activationWanted(voice,true),"Missing WSS: activation skips the rebind");
+        voice.permission = 0;
+        voice.secure.put(VoiceRepair.KEY,other);
+        check(!VoiceRepair.activationWanted(voice,true),"Another selected assistant: activation skips the rebind");
+        voice.secure.put(VoiceRepair.KEY,google);
+        voice.throwReads = 1;
+        check(!VoiceRepair.activationWanted(voice,true),"Unreadable setting: activation skips the rebind without crashing");
+        check(voice.writes==0,"Activation decisions never write");
+
+        voice.beforeWrite = () -> { if (voice.writes==1) check(google.equals(bar(voice).getString(VoiceRepair.PENDING,null)),"Exact original journaled before clearing the voice service"); };
+        check(VoiceRepair.run(voice),"Repair reports exact original restored");
+        voice.beforeWrite = null;
+        check(google.equals(voice.secure.get(VoiceRepair.KEY)) && voice.writes==2 && !bar(voice).contains(VoiceRepair.PENDING),"Repair clears once, restores the exact same Google value and drops the journal");
+
+        for (String value : new String[] { null, other, "com.google.android.googlequicksearchbox/.A:com.example/.B" }) {
+            context = new Context();
+            if (value != null) context.secure.put(VoiceRepair.KEY,value);
+            check(!VoiceRepair.run(context) && context.writes==0 && java.util.Objects.equals(value,context.secure.get(VoiceRepair.KEY)),"Non-Google or absent selection is never changed");
+        }
+        context = new Context();
+        context.permission = -1;
+        context.secure.put(VoiceRepair.KEY,google);
+        check(!VoiceRepair.run(context) && context.writes==0 && google.equals(context.secure.get(VoiceRepair.KEY)),"Missing WSS: repair makes no writes");
+        context = new Context();
+        context.secure.put(VoiceRepair.KEY,google);
+        bar(context).failNextCommit = true;
+        check(!VoiceRepair.run(context) && context.writes==0 && google.equals(context.secure.get(VoiceRepair.KEY)),"Unpersisted journal prevents clearing the voice service");
+
+        // Exceptions from Settings never escape and never lose the original.
+        context = new Context();
+        context.secure.put(VoiceRepair.KEY,google);
+        context.throwReads = 1;
+        check(!VoiceRepair.run(context) && context.writes==0 && google.equals(context.secure.get(VoiceRepair.KEY)),"Read exception before repair changes nothing");
+        context = new Context();
+        context.secure.put(VoiceRepair.KEY,google);
+        context.failStringWrites = 1;
+        check(!VoiceRepair.run(context) && google.equals(context.secure.get(VoiceRepair.KEY)) && !bar(context).contains(VoiceRepair.PENDING),"Rejected clear leaves selection and no stale journal");
+        context = new Context();
+        context.secure.put(VoiceRepair.KEY,google);
+        context.throwStringWrites = 1;
+        check(!VoiceRepair.run(context) && google.equals(context.secure.get(VoiceRepair.KEY)) && !bar(context).contains(VoiceRepair.PENDING),"SecurityException on clear leaves selection and no stale journal");
+        context = new Context();
+        context.secure.put(VoiceRepair.KEY,google);
+        context.throwAfterStringWrites = 1;
+        check(!VoiceRepair.run(context) && google.equals(context.secure.get(VoiceRepair.KEY)) && !bar(context).contains(VoiceRepair.PENDING),"Clear that landed but threw is immediately restored to the exact original");
+        context = new Context();
+        context.secure.put(VoiceRepair.KEY,google);
+        check(VoiceRepair.begin(context),"Repair clears the voice service key");
+        context.throwStringWrites = 1;
+        check(!VoiceRepair.finish(context) && context.secure.get(VoiceRepair.KEY)==null && google.equals(bar(context).getString(VoiceRepair.PENDING,null)),"SecurityException on restore keeps the exact journal");
+        context.throwReads = 1;
+        check(!VoiceRepair.recover(context) && bar(context).contains(VoiceRepair.PENDING),"Read exception during recovery keeps the journal");
+        check(VoiceRepair.recover(context) && google.equals(context.secure.get(VoiceRepair.KEY)) && !bar(context).contains(VoiceRepair.PENDING),"Later recovery restores the exact original");
+
+        // Process death mid-repair: the next service start restores.
+        context = new Context();
+        context.secure.put(VoiceRepair.KEY,google);
+        check(VoiceRepair.begin(context) && context.secure.get(VoiceRepair.KEY)==null,"Repair clears only the voice service key");
+        check(VoiceRepair.recover(context) && google.equals(context.secure.get(VoiceRepair.KEY)),"Next service start finishes an interrupted repair with the exact original");
+        check(VoiceRepair.recover(context) && context.writes==2,"Recovering again is idempotent");
+
+        context = new Context();
+        context.secure.put(VoiceRepair.KEY,google);
+        VoiceRepair.begin(context);
+        context.secure.put(VoiceRepair.KEY,other);
+        check(!VoiceRepair.recover(context) && other.equals(context.secure.get(VoiceRepair.KEY))
+            && !bar(context).contains(VoiceRepair.PENDING),"A selection made by someone else during repair is never overwritten");
+
+        context = new Context();
+        context.secure.put(VoiceRepair.KEY,google);
+        VoiceRepair.begin(context);
+        context.failStringWrites = 1;
+        check(!VoiceRepair.finish(context) && context.secure.get(VoiceRepair.KEY)==null && bar(context).contains(VoiceRepair.PENDING),"Rejected restore keeps the journal for retry");
+        context.permission = -1;
+        check(!VoiceRepair.finish(context) && bar(context).contains(VoiceRepair.PENDING),"Revoked WSS keeps the journal for retry");
+        context.permission = 0;
+        check(VoiceRepair.finish(context) && google.equals(context.secure.get(VoiceRepair.KEY)),"Retry restores the exact original");
+
+        context = new Context();
+        context.secure.put(VoiceRepair.KEY,google);
+        VoiceRepair.begin(context);
+        check(VoiceRepair.run(context) && google.equals(context.secure.get(VoiceRepair.KEY)) && context.writes==4
+            && !bar(context).contains(VoiceRepair.PENDING),"A new repair first restores a leftover journal, then rebinds once");
+
+        // Repeated requests: concurrent clicks are deduplicated and recovery never cuts a live repair short.
+        Context shared = new Context();
+        shared.secure.put(VoiceRepair.KEY,google);
+        boolean[] first = new boolean[1];
+        Thread running = new Thread(() -> first[0] = VoiceRepair.run(shared));
+        running.start();
+        long until = System.currentTimeMillis() + 2000;
+        while (shared.secure.get(VoiceRepair.KEY) != null && System.currentTimeMillis() < until) Thread.onSpinWait();
+        check(VoiceRepair.busy() && shared.secure.get(VoiceRepair.KEY)==null,"First request is mid-repair");
+        check(!VoiceRepair.run(shared),"A concurrent repeated request is dropped");
+        check(VoiceRepair.recover(shared) && shared.secure.get(VoiceRepair.KEY)==null,"Service-start recovery does not cut a live repair short");
+        try { running.join(); } catch (InterruptedException interrupted) { throw new AssertionError(interrupted); }
+        check(first[0] && !VoiceRepair.busy() && google.equals(shared.secure.get(VoiceRepair.KEY)) && shared.writes==2,"Repeated request caused exactly one clear and one restore");
+        check(VoiceRepair.run(shared) && shared.writes==4,"A later explicit request runs again");
         System.out.println("PASS: " + checks + " stateful Android settings checks; actual recovery and gesture classes, no device used.");
     }
 }
@@ -390,6 +511,7 @@ foreach ($relative in $fixtures.Keys) {
 $stateSources = @(Get-ChildItem -LiteralPath $stateFolder -Filter *.java -Recurse -File | Select-Object -ExpandProperty FullName)
 $stateSources += Join-Path $PSScriptRoot 'micts/fast-launch/BootRecovery.java'
 $stateSources += Join-Path $PSScriptRoot 'micts/fast-launch/BarGesture.java'
+$stateSources += Join-Path $PSScriptRoot 'micts/fast-launch/VoiceRepair.java'
 $stateClasses = Join-Path $stateFolder 'classes'
 & javac.exe --release 17 -encoding UTF-8 -d $stateClasses @stateSources
 if ($LASTEXITCODE) { throw 'Stateful Android test compilation failed' }
@@ -459,6 +581,33 @@ if ($allSources['LogSession.java'] -notmatch 'input\.read\(packet, 0, packet\.le
 $securityChecks++
 if ($allSources['LogSession.java'] -notmatch 'diagnostics < MAX_DIAGNOSTICS' -or $allSources['LogSession.java'] -match 'Log\.[a-z]\([^;]*new String\(packet') {
     throw 'Log diagnostics must stay bounded and structural'
+}
+$securityChecks++
+$repairUsers = @($allSources.Keys | Where-Object { $_ -ne 'VoiceRepair.java' -and $allSources[$_] -match 'VoiceRepair\.(run|begin)\(' } | Sort-Object)
+if (($repairUsers -join ',') -cne 'SetupActivity.java') { throw 'Google voice rebind must only start from the explicit settings button' }
+$securityChecks++
+if ($allSources['BarService.java'] -notmatch 'VoiceRepair\.recover\(this\)') { throw 'Service start must finish an interrupted voice rebind' }
+$securityChecks++
+if ($allSources['SetupActivity.java'] -notmatch 'approveIfNeeded\(\); repairVoice\(false\); status' -or
+    $allSources['SetupActivity.java'] -notmatch 'if \(checked\) \{ approveIfNeeded\(\); repairVoice\(false\); \}' -or
+    ([regex]::Matches($allSources['SetupActivity.java'], 'repairVoice\(false\)')).Count -ne 2) {
+    throw 'Voice rebind runs once on explicit Start and power-enable only'
+}
+$securityChecks++
+# Programmatic sync (onResume/refresh) must never act as a user change: no repair, mode, power or boot-option setter.
+$settingsSource = $allSources['SetupActivity.java']
+$unguarded = [regex]::Replace($settingsSource, '(?s)syncing = true;\s*try \{.*?\} finally \{ syncing = false; \}', '')
+$unguarded = $unguarded.Replace('modeGroup.check(BarService.nativeMode(this) ? colorId : touchId);', '') # initial state, before the listener exists
+if ($unguarded -match 'powerSwitch\.setChecked\(|bootSwitch\.setChecked\(|modeGroup\.check\(' -or
+    $settingsSource -notmatch '(?s)modeGroup\.setOnCheckedChangeListener\(\(group, selected\) -> \{\s*if \(syncing\) return;' -or
+    $settingsSource -notmatch '(?s)powerSwitch = toggle\("[^"]*", BarService\.power\(this\), \(view, checked\) -> \{\s*if \(syncing\) return;' -or
+    $settingsSource -notmatch '(?s)bootSwitch = toggle\("[^"]*", BootRecovery\.wanted\(this\), \(view, checked\) -> \{\s*if \(syncing\) return;') {
+    throw 'Settings refresh must not trigger repair or enable/disable setters'
+}
+$securityChecks++
+if ([regex]::Matches($allSources['VoiceRepair.java'], 'Settings\.Secure\.put\w*\(context\.getContentResolver\(\), KEY,').Count -ne 2 -or
+    $allSources['VoiceRepair.java'] -match '"assistant"|Settings\.(Global|System)\.put|ROLE_ASSISTANT|RoleManager') {
+    throw 'Voice repair may only clear and restore voice_interaction_service'
 }
 $securityChecks++
 if ($allSources['GeminiSession.java'] -match 'ACTION_ASSIST|ACTION_VOICE_COMMAND|VOICE_ASSIST|ACTION_SEARCH_LONG_PRESS|getLaunchIntentForPackage|makeMainActivity|CATEGORY_LAUNCHER|startActivity') {

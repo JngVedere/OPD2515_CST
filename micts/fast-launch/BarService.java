@@ -170,7 +170,8 @@ public final class BarService extends AccessibilityService {
         }
         Log.i("PadPower", "power dispatch -> GeminiSession.launch");
         boolean started = GeminiSession.launch(this);
-        Log.i("PadPower", "GeminiSession.launch returned " + started);
+        // true = the system accepted the session request; it does not prove an assistant window appeared.
+        Log.i("PadPower", "GeminiSession.launch returned " + started + " (request acceptance, window unverified)");
         if (!started) android.widget.Toast.makeText(this, "작은 Gemini를 열지 못했습니다.", android.widget.Toast.LENGTH_SHORT).show();
     }
 
@@ -228,6 +229,7 @@ public final class BarService extends AccessibilityService {
     @Override public void onCreate() {
         super.onCreate();
         windows = getSystemService(WindowManager.class);
+        VoiceRepair.recover(this); // A voice rebind interrupted by process death restores the exact original selection.
         int systemUi;
         try { systemUi = getPackageManager().getApplicationInfo("com.android.systemui", 0).uid; }
         catch (PackageManager.NameNotFoundException missing) { systemUi = -1; } // Bar events then never match.
