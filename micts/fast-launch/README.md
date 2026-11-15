@@ -1,54 +1,62 @@
-# 하단 검색 0.2.6 개발 안내
+# 하단 검색 0.2.7 개발 안내
 
-Android 앱 `dev.padhelper.fastcts`, 최초 공개 버전 **0.2.6 / 코드 14**입니다. 내부 개발 버전 2.9.0을 바탕으로 공개 버전 번호를 부여했습니다. OPD2515 / ColorOS 17 CN / Android 17에서 확인했습니다. 사용자 설치·권한·앱 설정 열기는 [사용 가이드](../../HOW%20TO%20USE.MD)를 참고하세요.
+Android 앱 `dev.padhelper.fastcts`, 버전 **0.2.7 / 코드 15**입니다. 대상은 OPD2515 / ColorOS 17 CN / Android 17입니다. 사용자 설치·권한·앱 설정 열기는 [사용 가이드](../../HOW%20TO%20USE.MD)를 참고하세요.
 
-## 두 실행 방식
+`GeminiSession.launch(Context)`는 현재 Google 음성 서비스의 일반 어시스턴트 세션을 요청합니다. Google의 모바일 어시스턴트를 Gemini로 설정해야 작은 Gemini 창이 열립니다. 전체 앱 실행이나 ASSIST intent로 대체하지 않습니다.
 
-기본값인 **하단 영역 인식**은 접근성 오버레이 200dp × 38dp에서 약 400ms 길게 누르기를 인식합니다. 이동·취소·중복 실행을 막고 설정 안에서만 범위를 표시합니다.
+## 구조
 
-**ColorOS 기본 하단 바 · 로그 감지**는 투명 터치 영역을 제거하고 OEM의 기본 바 제스처·애니메이션을 사용합니다. 비활성화된 Breeno 서비스의 호출 시도를 셸 에이전트가 감지합니다. system 버퍼·로그 생산 UID 1000·ActivityManager 경고로 입력을 제한하고, SystemUI 호출 UID·현재 사용자·정확한 실패 형식·새 시각·중복 조건을 검사합니다. 확인한 전원 버튼 호출 UID 1000은 제외합니다. UID는 동적으로 조회하며 다른 ROM은 별도 검증이 필요합니다.
+| 경로 | 동작 |
+| --- | --- |
+| 하단 영역 | 접근성 오버레이 200dp × 38dp에서 약 400ms 길게 누르기 → `MainActivity` → Google 준비 후 MiCTS 또는 선택 앱 |
+| ColorOS 기본 바 | OEM 제스처 값 1 + 비활성화된 Breeno 서비스 시작 실패 로그(SystemUI 호출 UID) → `MainActivity` |
+| 전원 버튼 | `KEYLOG_SinglePowerKeyMonitor: PowerKey:onLongPress` → `GeminiSession.launch(Context)` |
 
-기존 Breeno 창 감지·뒤로 닫기 방식과는 다릅니다. 접근성 이벤트 유형은 0이며 화면 읽기·캡처·제스처 주입을 요청하지 않습니다. `setup_native_bar`는 계속 무시합니다. 새 선택은 `trigger_mode`의 `touch` 또는 `coloros_log`입니다.
+기본 바와 전원 버튼은 `BarService`(접근성 서비스)가 소유하는 **앱 UID의 logd 연결 하나**를 공유합니다. 셸 에이전트·`app_process`·`logcat` 자식 프로세스·포그라운드 서비스·일반 오버레이는 없습니다. 0.2.6의 ADB 셸 Binder 에이전트(`NativeBar*`)와 DUMP 보호 등록 Provider는 제거했습니다.
 
-기본 연결은 Google 준비 후 공식 MiCTS 2.6 호출입니다. 다른 앱 선택, 최근 앱 카드 표시, 범위 미리보기, 빠른 설정 타일과 아이콘 없는 설정 진입도 지원합니다.
+### 로그 연결 (`LogSession`, `LogTrigger`)
 
-## Binder 에이전트
+- `logdr` 예약 소켓에 SOCK_SEQPACKET으로 접속해 `stream lids=3 tail=1`(system 버퍼만)을 요청하고 블로킹으로 읽습니다. 폴링·heartbeat·주기 타이머는 없습니다.
+- **연결됨** 판정은 logd 헤더의 작성자 UID가 1000인 항목을 받은 뒤입니다. 앱 자신의 UID 항목은 건강 신호로 쓰지 않습니다. Android가 승인을 거부하면 자기 UID 로그만 전달되므로, 35초 안에 시스템 UID 항목이 없으면 연결을 닫고 그 부팅의 자동 요청을 멈춥니다.
+- 분류는 작성자 UID 1000·system 버퍼·정확한 태그와 메시지 형식을 요구합니다. 기본 바는 ActivityManager 경고, 정확한 Breeno 서비스 실패 형식, SystemUI 호출 UID와 현재 사용자를 검사합니다. 전원 버튼이 함께 남기는 호출 UID 1000의 같은 실패 로그는 기본 바로 인식하지 않습니다.
+- 세션 시작 시각 이전(tail 재생), 미래, 1500ms보다 오래된 항목은 버리고, 종류별 1500ms 안의 중복(예: 3ms 간격의 이중 전원 마커)과 순서가 뒤바뀐 항목을 막습니다.
+- 원본 로그는 리더 스레드 밖으로 나가지 않습니다. 저장·재기록·전송하지 않고, 종류(BAR/POWER)만 메인 스레드로 넘깁니다.
+- 화면 켜짐/꺼짐이나 설정 화면 방문으로 연결을 다시 열지 않습니다. 기본 바도 전원도 쓰지 않거나 READ_LOGS가 없으면 연결을 닫습니다. 화면이 꺼진 동안에도 system 버퍼 항목을 받아 헤더만 확인합니다.
 
-앱의 **기본 바 ADB 활성화 안내**가 현재 APK 경로·UID·버전에 맞는 `app_process` 명령을 생성합니다. 사용자가 ADB 셸로 실행해야 하며 루트·Shizuku·별도 Windows GUI는 필요하지 않습니다. 재부팅·APK 업데이트 후에는 다시 활성화해야 합니다.
+### 승인 브리지 (`LogAccessActivity`)
 
-앱 등록 Provider는 `android.permission.DUMP`와 실제 호출 UID 2000을 모두 확인합니다. 셸은 Android `content` 명령과 같은 외부 Provider API로 등록하고 Provider 소유 패키지·UID를 확인합니다. 이후 양방향 Binder는 호출 UID, 인터페이스, 고정 크기 데이터, 프로토콜·앱 버전, 연결 세대와 이벤트 시각을 확인합니다. 등록 완료 뒤 READY를 받기 전에는 RUN을 보내지 않습니다.
+Android의 `LogcatManagerService`는 새 로그 연결을 요청한 UID가 TOP일 때만 확인 창을 띄웁니다. 그래서 새 연결은 투명·비노출·최근 앱 제외 브리지에서만 엽니다. 브리지는 실제 창 포커스를 얻은 뒤 420ms 뒤 한 번만 요청하고, 잠금 상태면 요청하지 않습니다. 6.5초 안에 포커스를 못 얻으면(다른 시스템 창) 종료하고, 최대 12초 뒤에는 무조건 종료합니다. 확인 창을 누르거나 건너뛰지 않습니다.
 
-원본 로그는 파일이나 앱에 전달하지 않습니다. 전달되는 것은 길게 누르기 신호·세대·시각뿐입니다. 앱에 READ_LOGS나 네트워크 권한을 추가하지 않습니다. 셸 로그 읽기는 블로킹 방식이며 영역 모드·사용 꺼짐·화면 꺼짐에서는 로그 자식을 중지하고 연결만 유지합니다. Binder 단절·예상치 못한 로그 자식 종료는 제한된 재연결 경로로 복구하고, 명시적 종료는 재연결하지 않습니다. 정상 동작이 확인되지 않는 반복 실패는 최대 30초 뒤 중단합니다.
+자동 표시는 `ACTION_USER_PRESENT`와 접근성 연결 시점에만 검사합니다. 조건은 사용 중인 로그 기능, READ_LOGS, 접근성 승인, 화면 켜짐·잠금 해제, 브리지 미표시, 이번 부팅에서 거부 기록 없음, 부팅당 3회 미만입니다(`Settings.Global.BOOT_COUNT` 기준). 설정의 **기기 로그 접근 승인 요청**, 기본 바 선택, 전원 스위치 켜기, 사용 시작은 사용자의 명시적 조작이므로 거부 기록과 무관하게 한 번 요청합니다.
 
 ## 파일 역할
 
 | 파일 | 역할 |
 | --- | --- |
 | `MainActivity.java` | 내부 실행 연결, Google 준비와 공식 MiCTS 또는 선택 앱 실행 |
-| `BarService.java` | 영역 터치·모드 전환·화면 상태·Binder 이벤트 수신 후 실행 |
-| `SetupActivity.java` | 방식·범위·최근 앱·연결 앱·권한·활성화 안내 |
-| `SetupCommandActivity.java` | DUMP로 보호한 개발용 설정 진입점 |
+| `BarService.java` | 영역 터치·모드·전원 스위치·화면 상태, 로그 연결 소유, 자동 승인 요청 한도 |
+| `LogSession.java` | 단일 logd 소켓, 시스템 UID 건강 판정, 활성화 시간 제한, Breeno 상태 |
+| `LogTrigger.java` | 순수 Java 패킷 분류, 신선도·중복·재생 차단, 자동 요청 조건 |
+| `LogAccessActivity.java` | 포커스 확인 뒤 새 연결을 요청하는 제한된 투명 브리지 |
+| `GeminiSession.java` | 잠금·Google 기본 어시스턴트 확인, 허용된 Google provider 준비, 작은 어시스턴트 세션 요청 |
+| `SetupActivity.java` | 방식·전원·기기 로그 상태·범위·최근 앱·연결 앱·권한 안내 |
+| `SetupCommandActivity.java` | DUMP로 보호한 개발용 설정 진입점(`setup_mode`, `setup_enable`, `setup_power`, `setup_boot_recovery`, `setup_circle`) |
 | `BarGesture.java` | OEM 값 0/1 적용, 최초 원래 값 보관과 복원 |
-| `NativeBarProtocol.java` | 프로토콜 상수, 이벤트 출처와 시각 판별 |
-| `NativeBarWire.java` | 고정 크기 one-way Binder 메시지 |
-| `NativeBarProvider.java` | 셸 전용 등록 창구 |
-| `NativeBarBridge.java` | 접근성 소유 세션·UID·세대·수명 관리 |
-| `NativeBarAgent.java` | 셸 등록, 제한된 로그 읽기·분류와 복구 |
 | `BootRecovery.java`, `BootReceiver.java` | 이전 승인 조건 아래 자기 접근성만 부팅 직후 복구 |
 | `BarTile.java` | 빠른 설정 사용 전환과 설정 열기 |
 | `App-Version.json`, `Build.ps1` | 버전 선언, 컴파일·검증·서명 |
 
 ## 권한과 복원
 
-요청 권한은 `RECEIVE_BOOT_COMPLETED`와 `WRITE_SECURE_SETTINGS`입니다. 보안 설정 쓰기는 영역 모드에서 선택 사항이며 기본 바 모드에서 필요합니다. 앱이 스스로 부여할 수 없습니다.
+요청 권한은 `RECEIVE_BOOT_COMPLETED`, `WRITE_SECURE_SETTINGS`, `READ_LOGS` 세 개입니다. `Build.ps1`은 이 목록 밖의 권한과 READ_LOGS 누락, 런처 아이콘을 거부합니다. 보안 설정 쓰기와 READ_LOGS는 앱이 스스로 부여할 수 없으며 최초 한 번 ADB로 부여합니다. READ_LOGS 부여는 유지되지만 각 새 로그 연결에는 Android의 사용자 확인이 필요합니다.
 
-영역은 실제 터치 창이 붙은 뒤 OEM 호출 값을 0으로, 기본 바는 로그 수신 확인 뒤 1로 설정합니다. 첫 원래 값을 모드 전환 중에도 보존하고 끄기·접근성 해제 시 복원을 시도합니다. 앱 제거 전에 먼저 끄기를 누릅니다. 강제 종료·삭제 뒤 복원은 보장하지 않습니다. ColorOS 전체 보호를 약화하지 않습니다.
-
-부팅 복구는 이전 자기 승인·사용·복구 옵션·권한·같은 부팅·부팅 전 승인 목록을 확인하고 부팅 직후 약 5초만 동작합니다. 다른 접근성 목록을 보존합니다. 셸 에이전트의 재부팅 후 재활성화는 대신하지 않습니다.
+영역은 실제 터치 창이 붙은 뒤 OEM 호출 값을 0으로, 기본 바는 로그 연결이 시스템 UID 항목을 받은 뒤 1로 설정합니다. 첫 원래 값을 모드 전환 중에도 보존하고 끄기·접근성 해제 시 복원을 시도합니다. 부팅 복구는 이전 자기 승인·사용·복구 옵션·권한·같은 부팅·부팅 전 승인 목록을 확인하고 부팅 직후 약 5초만 동작합니다. ColorOS 전체 보호·절전 설정·다른 패키지는 바꾸지 않습니다.
 
 ## 빌드·검사·배포
 
-JDK 21과 Android SDK Platform/Build-Tools `android-37.0`이 필요합니다. SDK 기본 루트는 `%LOCALAPPDATA%/Android/Sdk`이며 `-Sdk`로 변경합니다. Gradle과 별도 앱 라이브러리는 사용하지 않습니다.
+JDK 21과 Android SDK Platform/Build-Tools `android-37.0`이 필요합니다. SDK 기본 루트는 `%LOCALAPPDATA%/Android/Sdk`이며 `-Sdk`로 변경합니다. Gradle은 사용하지 않습니다.
+
+최초 빌드는 Maven Central의 AndroidHiddenApiBypass 6.1을 `build/deps/`에 받습니다. AAR와 내부 JAR의 SHA256을 고정해 검사하고, 이후에는 검증된 캐시를 사용합니다. Apache 2.0 라이선스와 출처는 `res/raw/notice_hidden_api_bypass.txt`에 포함됩니다. 이 PC 빌드 의존성은 앱에 네트워크 권한을 추가하지 않습니다. `Test-AndroidRecovery.ps1` 전에 빌드를 한 번 실행해주세요.
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\micts\fast-launch\Build.ps1
@@ -58,12 +66,17 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Test-Release.ps1
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Build-Release.ps1
 ```
 
-검증한 후보만 `MiCTS-Quick.apk`로 교체하고 루트 `App-Release.json`을 갱신합니다. 최종 배포는 `dist/Bottom-Search-0.2.6.apk`와 `.apk.sha256`입니다. 기존 설치 업데이트에는 같은 서명이 필요합니다. `build/keys/`와 개인 기기 기록은 Git·배포에서 제외합니다.
+- `Test-NativeBar.ps1`: 실제 `LogTrigger` 코드로 패킷 헤더 파싱, 작성자 UID·버퍼·태그·형식 분류, 자기 UID heartbeat 배제, 신선도·중복·재생 차단, 자동 요청 한도를 JDK만으로 검사합니다.
+- `Test-AndroidRecovery.ps1`: 전체 소스 컴파일, 부팅 복구·제스처 상태 검사와 함께 Provider 부재, 브리지 비노출, 정확한 권한 집합, 포그라운드 서비스·오버레이·추가 프로세스 부재, 제거된 에이전트 소스, 명령 실행 부재, 브리지 전용 연결 열기, 로그 비저장, 전원→`GeminiSession.launch` 연결, Gemini의 launcher/ASSIST 대체 금지를 검사합니다.
+
+검증한 후보만 `MiCTS-Quick.apk`로 교체하고 루트 `App-Release.json`을 갱신합니다. 최종 배포는 `dist/Bottom-Search-0.2.7.apk`와 `.apk.sha256`입니다. 기존 설치 업데이트에는 같은 서명이 필요합니다. `build/keys/`와 개인 기기 기록은 Git·배포에서 제외합니다.
 
 ## 검증과 제한
 
-Android 복구·보안 147개, 이벤트·시각 정책 67개, 배포 49개로 **263개 검사**를 통과했습니다. 실제 Android 정규식·Binder는 실기기에서 검증했습니다. 모두 닫기 뒤 영역 검색 2회·기본 바 검색 3회, UI 전환, 서비스 재연결, 로그 자식 종료 후 복구, 잘못된 등록 거부, 무권한 앱 차단, 종료·재활성화, 화면 꺼짐/켜짐과 전원 버튼 제외를 확인했습니다. 재부팅 뒤 접근성 복구·영역 방식·수동 ADB 재활성화 뒤 기본 바 검색도 확인했습니다.
+0.2.7은 OPD2515에서 작은 Gemini 팝업, 기본 하단 바 CTS, 기존 영역 방식과 전원 기능의 병행, 전원 기능 끄기, 로그 연결 종료를 확인했습니다. USB를 분리한 상태로 재부팅한 뒤 첫 잠금 해제에서 승인창이 자동 표시되고, 사용자 승인 한 번으로 두 기능이 복구되는 것도 확인했습니다. 앱을 직접 열거나 ADB 권한을 재부여하지 않았습니다.
 
-Google의 **화면에 관해 물어보기** 내부 PNG 압축 지연과 0.5초 목표는 별도 미해결 문제입니다. 이번 기능은 검색용 이미지 축소나 Google 내부 처리 변경을 하지 않습니다. 장시간 배터리, 다른 기기·펌웨어와 실제 보안 설정 쓰기 권한 회수 후 동작은 미검증입니다.
+자동 검사는 `Test-NativeBar.ps1` 230개, `Test-AndroidRecovery.ps1` 77 + 56 + 31개, `Test-Release.ps1` 47개가 통과했습니다. 대기 후 재호출은 약 55초 구간에서 확인했으며 장시간 배터리와 다른 기기·펌웨어에서의 동작은 보장하지 않습니다. Android의 새 로그 연결 승인을 생략하거나 대신 누르지 않습니다.
 
-트리거 아이디어는 [ColorGoogle 고정 버전](https://github.com/joeyandu/ColorGoogle/tree/38ead061d06d5f24b5ff20b92f58d5e4632a0298)을 참고했습니다. 셸 등록 API는 [Android content 명령](https://android.googlesource.com/platform/frameworks/base/+/refs/heads/main/cmds/content/src/com/android/commands/content/Content.java)을 참고했습니다. 이전 Windows 도구·개인 기록·서명 키·APK는 이 소스 저장소에 포함하지 않습니다.
+접근성 서비스가 실행 중일 때 `uiautomator dump`는 일반 접근성 서비스를 일시 중지시켜 로그 연결을 끊습니다. 기기 검사에는 `screencap`, `dumpsys`, `logcat`을 사용해야 합니다. UIAutomator 사용 뒤에는 로그 세션 재승인이 필요할 수 있습니다.
+
+참고: 기본 바 트리거 아이디어는 [ColorGoogle](https://github.com/joeyandu/ColorGoogle/tree/38ead061d06d5f24b5ff20b92f58d5e4632a0298), 앱 자체 logd 연결과 포커스 브리지 방식은 [MindTrigger Assist](https://github.com/evokermc098-coder/MindTriggerAssist/tree/ba0d945a9be65b9114e697fc794098c1f6b46f21)(GPL-3.0)를 참고해 별도로 구현했습니다. 두 프로젝트의 소스 파일은 포함하지 않습니다. logd 패킷 형식은 AOSP `logger_entry` v4를 따릅니다.

@@ -2,9 +2,12 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="dev.padhelper.fastcts">
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS" />
+    <!-- Development permission granted once over ADB; each new log session still needs Android's own confirmation. -->
+    <uses-permission android:name="android.permission.READ_LOGS" />
     <queries>
         <package android:name="com.android.systemui" />
         <package android:name="com.heytap.speechassist" />
+        <package android:name="com.google.android.googlequicksearchbox" />
         <intent>
             <action android:name="android.intent.action.MAIN" />
             <category android:name="android.intent.category.LAUNCHER" />
@@ -12,8 +15,6 @@
     </queries>
     <application android:label="하단 검색"
         android:allowBackup="false" android:theme="@style/TransparentTrigger">
-        <provider android:name=".NativeBarProvider" android:authorities="dev.padhelper.fastcts.nativebar"
-            android:exported="true" android:permission="android.permission.DUMP" />
         <receiver android:name=".BootReceiver" android:exported="false" android:directBootAware="true">
             <intent-filter>
                 <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED" />
@@ -22,6 +23,8 @@
         </receiver>
         <activity android:name=".MainActivity" android:exported="false"
             android:excludeFromRecents="true" android:taskAffinity="" />
+        <activity android:name=".LogAccessActivity" android:exported="false"
+            android:excludeFromRecents="true" android:taskAffinity="" android:launchMode="singleTask" />
         <activity android:name=".SetupCommandActivity" android:exported="true"
             android:permission="android.permission.DUMP"
             android:excludeFromRecents="true" android:taskAffinity="" />

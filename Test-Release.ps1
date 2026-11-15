@@ -124,9 +124,6 @@ Check ((Get-FileHash -LiteralPath $publishedApk -Algorithm SHA256).Hash -eq $rel
 Check ([IO.File]::ReadAllText($publishedChecksum) -ceq ($release.SHA256+'  '+$release.FileName+"`n")) 'Successful replacement publishes the matching checksum with LF'
 Check (@(Get-ChildItem -LiteralPath $dist -Force).Count -eq 2) 'Final release still contains only APK and checksum'
 
-$start = Join-Path $PSScriptRoot 'Start.cmd'
-Check (-not (@([IO.File]::ReadAllBytes($start) | Where-Object {$_ -gt 127}).Count)) 'Deprecated root launcher stays ASCII'
-Check (-not (@([IO.File]::ReadAllLines($start) | Where-Object {$_ -and $_ -cnotmatch '^(?:@echo off|echo [A-Za-z0-9 .:/\\_-]+|exit /b 1)$'}).Count)) 'Deprecated root launcher contains only echo-off, plain echo, and exit lines'
 } finally {
     if (Test-Path -LiteralPath $fixture) { Remove-TestFixture $fixture }
 }

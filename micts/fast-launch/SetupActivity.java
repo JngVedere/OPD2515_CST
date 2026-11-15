@@ -14,10 +14,10 @@ import java.text.Collator;
 import java.util.*;
 
 public final class SetupActivity extends Activity {
-    private TextView status, targetLabel;
+    private TextView status, logStatus, targetLabel;
     private LinearLayout body;
     private SharedPreferences preferences;
-    private Switch areaSwitch, recentSwitch, bootSwitch;
+    private Switch areaSwitch, recentSwitch, bootSwitch, powerSwitch;
     private RadioGroup modeGroup;
     private int touchId, colorId;
     private boolean waitingAccessibility;
@@ -46,6 +46,7 @@ public final class SetupActivity extends Activity {
         text("하단 검색", 24).setTypeface(null, android.graphics.Typeface.BOLD);
         text("하단 중앙을 길게 눌러 선택한 앱을 엽니다.", 18);
         status = text("", 16);
+        logStatus = text("", 16);
         button("사용 시작", this::begin);
         button("끄기", () -> { BarService.stop(this); refresh(); });
 
@@ -59,11 +60,22 @@ public final class SetupActivity extends Activity {
         modeGroup.check(BarService.nativeMode(this) ? colorId : touchId);
         modeGroup.setOnCheckedChangeListener((group, selected) -> {
             BarService.setMode(this, selected == colorId ? BarService.NATIVE : BarService.TOUCH);
+            if (selected == colorId && BarService.enabled(this)) approveIfNeeded();
             refresh();
         });
-        text("하단 영역은 투명한 터치 영역을 사용합니다. ColorOS 기본 바는 시스템 애니메이션과 제스처 이벤트를 사용하며 별도 ADB 활성화가 필요합니다. 두 방식은 동시에 실행되지 않습니다. 끄기는 변경 전 제스처 값을 복구하므로 앱 삭제 전에 먼저 눌러주세요.", 14);
-        button("기본 바 ADB 활성화 안내", this::nativeBarHelp);
-        button("기본 바 에이전트 종료", () -> { BarService.stopAgent(); refresh(); });
+        text("하단 영역은 투명한 터치 영역을 사용합니다. ColorOS 기본 바는 시스템 애니메이션을 그대로 쓰고, 기기 로그로 길게 누르기를 감지합니다. 두 방식은 동시에 실행되지 않습니다. 끄기는 변경 전 제스처 값을 복구하므로 앱 삭제 전에 먼저 눌러주세요.", 14);
+
+        heading("전원 버튼");
+        powerSwitch = toggle("전원 버튼 길게 눌러 작은 Gemini 열기", BarService.power(this), (view, checked) -> {
+            BarService.setPower(this, checked);
+            if (checked) approveIfNeeded();
+            refresh();
+        });
+        text("전원 버튼을 길게 누르면 Gemini 앱 전체 화면이 아닌 작은 Gemini 창을 엽니다. 하단 실행 방식과 따로 켜고 끌 수 있으며, 잠금 화면에서는 동작하지 않습니다. 접근성, 기기 로그 권한과 ColorOS의 전원 버튼 음성 비서 호출 설정이 필요합니다.", 14);
+
+        heading("기기 로그");
+        button("기기 로그 접근 승인 요청", () -> { BarService.requestApproval(this); status.postDelayed(this::refresh, 500); });
+        text("ColorOS 기본 바와 전원 버튼은 하나의 기기 로그 연결을 함께 사용합니다. 재부팅하면 첫 잠금 해제 뒤 Android의 기기 로그 접근 확인 창이 자동으로 한 번 뜨며, 허용하면 두 기능이 함께 다시 동작합니다. 다른 시스템 창에 가려 확인 창이 보이지 않았거나 거부했다면 이 버튼으로 다시 요청하세요. 앱이 승인을 대신 누르지 않으며, 강제 종료·권한 회수·시스템 제한으로 연결이 끊길 수 있습니다.", 14);
 
         heading("터치 영역");
         areaSwitch = toggle("인식 영역 표시", preferences.getBoolean("show_area", false), (view, checked) -> {
@@ -102,17 +114,7 @@ public final class SetupActivity extends Activity {
             preferences.edit().putBoolean(BootRecovery.OPTION, checked).apply();
         });
         text("이전에 직접 켠 접근성만 재부팅 직후 복구합니다. 부팅 전에 접근성을 끄거나 이 옵션·사용을 끄면 자동 복구하지 않습니다. 이 선택 기능은 최초 한 번 ADB로 보안 설정 쓰기 권한을 허용해야 합니다.", 14);
-        button("최초 ADB 설정 안내", () -> {
-            String command = "adb shell pm grant --user 0 " + getPackageName()
-                + " android.permission.WRITE_SECURE_SETTINGS";
-            new AlertDialog.Builder(this).setTitle("선택 권한: 보안 설정 쓰기")
-                .setMessage("USB 디버깅으로 본인 기기를 연결한 뒤 ADB가 있는 컴퓨터에서 아래 명령을 실행하세요. 여러 기기나 사용자가 있으면 대상 일련번호와 사용자 번호를 지정하세요.\n\n"
-                    + command + "\n\n앱이 시스템 설정을 바꿀 수 있는 강한 권한입니다. 이전에 승인한 자기 접근성의 부팅 복구와 하단 바의 Breeno 호출 억제에 사용합니다. 앱이 스스로 부여할 수 없으며 ColorOS가 거부하면 수동 접근성·제스처 설정을 사용하세요. 권한 부여 후 자동 복구 옵션을 직접 켜주세요.")
-                .setPositiveButton("명령 복사", (dialog, which) -> {
-                    getSystemService(android.content.ClipboardManager.class).setPrimaryClip(ClipData.newPlainText("하단 검색 ADB 설정", command));
-                    Toast.makeText(this, "명령을 복사했습니다.", Toast.LENGTH_SHORT).show();
-                }).setNegativeButton("닫기", null).show();
-        });
+        button("최초 ADB 설정 안내", this::adbHelp);
         button("접근성 설정", this::openAccessibility);
         button("빠른 설정에 버튼 추가", () -> {
             if (Build.VERSION.SDK_INT >= 33) {
@@ -136,23 +138,28 @@ public final class SetupActivity extends Activity {
         text("상태 알림 없이 실행됩니다. 선택한 방식으로 연결 앱을 엽니다. 화면 내용 읽기와 캡처는 사용하지 않습니다.", 14);
     }
 
-    private void nativeBarHelp() {
-        try {
-            String command = NativeBarBridge.activationCommand(this);
-            int user = getApplicationInfo().uid / 100000;
-            new AlertDialog.Builder(this).setTitle("ColorOS 기본 바 활성화")
-                .setMessage("접근성과 보안 설정 쓰기 권한을 먼저 허용하고 ColorOS 기본 바 방식을 선택하세요. Breeno가 꺼져 있어야 합니다. 현재 상태: "
-                    + (NativeBarBridge.breenoDisabled(this) ? "Breeno 비활성화됨" : "Breeno 비활성화 필요")
-                    + "\n\n필요한 경우에만 본인 기기에서 실행할 Breeno 비활성화 명령:\nadb shell pm disable-user --user " + user + " com.heytap.speechassist"
-                    + "\n\nADB가 있는 컴퓨터에서 실행할 에이전트 활성화 명령:\n" + command
-                    + "\n\n에이전트는 ADB 셸 권한으로 시스템의 해당 제스처 로그만 감지합니다. 화면·음성·검색어를 수집하거나 로그를 저장하지 않습니다. 재부팅·앱 업데이트 후에는 다시 활성화해야 합니다. 연결된 동안에는 위 실행 방식만 바꿔 전환할 수 있습니다. 여러 기기에서는 adb -s로 대상을 지정하세요.")
-                .setPositiveButton("활성화 명령 복사", (dialog, which) -> {
-                    getSystemService(android.content.ClipboardManager.class).setPrimaryClip(ClipData.newPlainText("기본 바 활성화", command));
-                    Toast.makeText(this, "에이전트 활성화 명령을 복사했습니다.", Toast.LENGTH_SHORT).show();
-                }).setNegativeButton("닫기", null).show();
-        } catch (Exception unavailable) {
-            Toast.makeText(this, "이 기기의 기본 바 활성화 정보를 확인할 수 없습니다.", Toast.LENGTH_LONG).show();
-        }
+    /** Only after an explicit switch change: one standard confirmation if no session is live. */
+    private void approveIfNeeded() {
+        if (BarService.granted(this) && BarService.logsPermitted(this) && BarService.serviceRunning()
+                && BarService.logsWanted(this) && BarService.logState() == LogSession.OFF) BarService.requestApproval(this);
+    }
+
+    private void adbHelp() {
+        int user = getApplicationInfo().uid / 100000;
+        String grant = "adb shell pm grant --user " + user + " " + getPackageName() + " android.permission.";
+        String command = grant + "WRITE_SECURE_SETTINGS\n" + grant + "READ_LOGS";
+        new AlertDialog.Builder(this).setTitle("최초 ADB 설정")
+            .setMessage("USB 디버깅으로 본인 기기를 연결한 뒤 ADB가 있는 컴퓨터에서 아래 명령을 한 번 실행하세요. 여러 기기가 연결되어 있으면 adb -s로 대상을 지정하세요.\n\n"
+                + command
+                + "\n\n보안 설정 쓰기: 앱이 시스템 설정을 바꿀 수 있는 강한 권한입니다. 재부팅 후 자기 접근성 복구와 하단 바 제스처 전환에 사용하며, ColorOS 기본 바 방식에 필요합니다."
+                + "\n\n기기 로그 읽기: ColorOS 기본 바와 전원 버튼 길게 누르기를 감지하는 데 사용합니다. 로그를 저장하거나 외부로 보내지 않습니다. 권한은 재부팅 후에도 유지되지만, 재부팅마다 첫 잠금 해제 뒤 Android의 확인 창에서 직접 허용해야 합니다."
+                + "\n\nBreeno 상태: " + (LogSession.breenoDisabled(this) ? "비활성화됨" : "비활성화 필요")
+                + ". 켜져 있으면 기본 바는 동작하지 않고, 전원 버튼에서 Breeno가 함께 열릴 수 있습니다. 원하는 경우에만 직접 실행하세요.\nadb shell pm disable-user --user " + user + " com.heytap.speechassist"
+                + "\n\n앱이 스스로 권한을 부여하거나 Breeno를 끄지 않습니다.")
+            .setPositiveButton("권한 명령 복사", (dialog, which) -> {
+                getSystemService(android.content.ClipboardManager.class).setPrimaryClip(ClipData.newPlainText("하단 검색 ADB 설정", command));
+                Toast.makeText(this, "명령을 복사했습니다.", Toast.LENGTH_SHORT).show();
+            }).setNegativeButton("닫기", null).show();
     }
 
     private int dp(int value) { return Math.round(value * getResources().getDisplayMetrics().density); }
@@ -249,7 +256,7 @@ public final class SetupActivity extends Activity {
     private void begin() {
         BarService.start(this);
         if (!BarService.granted(this)) { waitingAccessibility = true; openAccessibility(); }
-        else status.postDelayed(this::refresh, 250);
+        else { approveIfNeeded(); status.postDelayed(this::refresh, 250); }
     }
 
     private void openAccessibility() {
@@ -265,12 +272,30 @@ public final class SetupActivity extends Activity {
         if (!BarService.granted(this)) state = "접근성 설정 필요";
         else if (!BarService.enabled(this)) state = "꺼짐";
         else if (nativeMode && !BootRecovery.permitted(this)) state = "기본 바 · 보안 설정 쓰기 권한 필요";
-        else if (nativeMode && !NativeBarBridge.breenoDisabled(this)) state = "기본 바 · Breeno 비활성화 필요";
-        else if (nativeMode && !BarService.agentConnected()) state = "기본 바 · ADB 활성화 필요";
-        else if (!BarService.ready(this)) state = nativeMode ? "기본 바 · 로그 수신 또는 제스처 설정 확인 필요" : "터치 영역 연결 대기";
+        else if (nativeMode && !LogSession.breenoDisabled(this)) state = "기본 바 · Breeno 비활성화 필요";
+        else if (nativeMode && BarService.logState() != LogSession.ACTIVE) state = "기본 바 · 기기 로그 연결 대기";
+        else if (!BarService.ready(this)) state = nativeMode ? "기본 바 · 제스처 설정 확인 필요" : "터치 영역 연결 대기";
         else state = nativeMode ? "사용 중 · ColorOS 기본 바 연결" : "사용 중 · 터치 영역 연결";
         status.setText("상태  " + state);
+        logStatus.setText("기기 로그  " + logState() + "\n전원 버튼  " + powerState());
         targetLabel.setText(preferences.getString(MainActivity.TARGET_LABEL, "서클 투 서치 (기본 · 빠른 실행)"));
+    }
+
+    /** Structural state only: a session counts as connected after a system-UID entry, never on own-UID output. */
+    private String logState() {
+        if (!BarService.logsWanted(this)) return "꺼짐 · 사용하는 기능 없음";
+        if (!BarService.logsPermitted(this)) return "권한 필요 · 최초 ADB 설정 안내 참고";
+        if (!BarService.granted(this) || !BarService.serviceRunning()) return "접근성 연결 대기";
+        switch (BarService.logState()) {
+            case LogSession.ACTIVE: return "연결됨";
+            case LogSession.CONNECTING: return "확인 창에서 허용 대기 중";
+            default: return "승인 필요 · 기기 로그 접근 승인 요청을 눌러주세요";
+        }
+    }
+
+    private String powerState() {
+        if (!BarService.power(this)) return "꺼짐";
+        return BarService.logState() == LogSession.ACTIVE && BarService.serviceRunning() ? "감지 중" : "기기 로그 연결 대기";
     }
 
     @Override protected void onNewIntent(Intent intent) {
@@ -282,6 +307,7 @@ public final class SetupActivity extends Activity {
     @Override public void onResume() {
         super.onResume();
         bootSwitch.setChecked(BootRecovery.wanted(this));
+        powerSwitch.setChecked(BarService.power(this));
         BarService.refreshConfiguration(); refresh(); applyRecentVisibility();
         status.postDelayed(this::refresh, 300);
         BarService.showPreview(areaSwitch.isChecked());

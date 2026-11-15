@@ -17,6 +17,7 @@ public final class SetupCommandActivity extends Activity {
             edit.remove(MainActivity.TARGET_COMPONENT).remove(MainActivity.TARGET_LABEL);
         if (command.hasExtra("setup_boot_recovery") && BootRecovery.permitted(this))
             edit.putBoolean(BootRecovery.OPTION, command.getBooleanExtra("setup_boot_recovery", false));
+        if (command.hasExtra("setup_power")) edit.putBoolean(BarService.POWER, command.getBooleanExtra("setup_power", true));
         edit.apply();
         String mode = command.getStringExtra("setup_mode");
         if (BarService.TOUCH.equals(mode) || BarService.NATIVE.equals(mode)) BarService.setMode(this, mode);

@@ -1,23 +1,29 @@
 package dev.padhelper.fastcts;
 
+import android.Manifest;
 import android.app.*;
 import android.accessibilityservice.AccessibilityService;
 import android.accessibilityservice.AccessibilityServiceInfo;
 import android.content.*;
+import android.content.pm.PackageManager;
 import android.content.res.Configuration;
 import android.graphics.PixelFormat;
 import android.graphics.drawable.GradientDrawable;
 import android.os.*;
+import android.provider.Settings;
 import android.util.Log;
 import android.view.*;
 import android.view.accessibility.AccessibilityEvent;
 
-/** Event-driven touch target. No polling, network, wake lock, or screen capture. */
+/** Event-driven touch target and owner of the single device-log session. No polling, network, wake lock, or screen capture. */
 public final class BarService extends AccessibilityService {
-    static final String MODE = "trigger_mode", TOUCH = "touch", NATIVE = "coloros_log";
+    static final String MODE = "trigger_mode", TOUCH = "touch", NATIVE = "coloros_log", POWER = "power_gemini";
     static final String STATE_CHANGED = "dev.padhelper.fastcts.STATE_CHANGED";
+    private static final String LOG_BOOT = "log_boot", LOG_AUTO = "log_auto", LOG_DECLINED = "log_declined";
+    private static final long BRIDGE_LIFETIME = 13000;
     private static BarService instance;
     static volatile boolean running;
+    private static volatile long bridgeSince;
     private static boolean preview;
     private final Handler handler = Handler.createAsync(Looper.getMainLooper());
     private WindowManager windows;
@@ -25,39 +31,81 @@ public final class BarService extends AccessibilityService {
     private float downX, downY;
     private boolean moved, holdFired;
     private int attachAttempts;
-    private NativeBarBridge nativeBridge;
+    private LogSession logs;
+
+    private static SharedPreferences prefs(Context context) { return context.getSharedPreferences("bar", MODE_PRIVATE); }
 
     static boolean ready(Context context) {
-        if (nativeMode(context)) return instance != null && enabled(context) && instance.nativeBridge != null && instance.nativeBridge.reading()
-            && BootRecovery.permitted(context) && android.provider.Settings.Secure.getInt(context.getContentResolver(), BarGesture.GESTURE_KEY, -1) == 1;
+        if (nativeMode(context)) return instance != null && enabled(context) && logState() == LogSession.ACTIVE
+            && BootRecovery.permitted(context) && Settings.Secure.getInt(context.getContentResolver(), BarGesture.GESTURE_KEY, -1) == 1;
         return instance != null && enabled(context)
             && instance.target != null && instance.target.isAttachedToWindow();
     }
 
-    static boolean nativeMode(Context context) { return NATIVE.equals(context.getSharedPreferences("bar", MODE_PRIVATE).getString(MODE, TOUCH)); }
+    static boolean nativeMode(Context context) { return NATIVE.equals(prefs(context).getString(MODE, TOUCH)); }
     static void setMode(Context context, String mode) {
         if (!TOUCH.equals(mode) && !NATIVE.equals(mode)) throw new IllegalArgumentException("Unknown trigger mode");
-        context.getSharedPreferences("bar", MODE_PRIVATE).edit().putString(MODE, mode).apply();
+        prefs(context).edit().putString(MODE, mode).apply();
         refreshConfiguration();
     }
-    static boolean agentConnected() { return instance != null && instance.nativeBridge != null && instance.nativeBridge.connected(); }
-    static void stopAgent() { if (instance != null && instance.nativeBridge != null) instance.nativeBridge.quit(); }
+
+    /** Power long press -> small Gemini. Independent of the bottom trigger; on by default. */
+    static boolean power(Context context) { return prefs(context).getBoolean(POWER, true); }
+    static void setPower(Context context, boolean on) {
+        prefs(context).edit().putBoolean(POWER, on).apply();
+        refreshConfiguration();
+    }
+
+    static boolean logsPermitted(Context context) {
+        return context.checkSelfPermission(Manifest.permission.READ_LOGS) == PackageManager.PERMISSION_GRANTED;
+    }
+    static boolean logsWanted(Context context) { return power(context) || (enabled(context) && nativeMode(context)); }
+    static int logState() { BarService service = instance; return service == null ? LogSession.OFF : service.logs.state(); }
+    static boolean serviceRunning() { return instance != null; }
+
+    static void bridgeShowing(boolean showing) { bridgeSince = showing ? SystemClock.elapsedRealtime() : 0; }
+    private static boolean bridgeShowing() {
+        long since = bridgeSince;
+        return since != 0 && SystemClock.elapsedRealtime() - since < BRIDGE_LIFETIME;
+    }
+
+    /** Called only by the focused bridge activity, so the request is made while this UID is TOP. */
+    static boolean openLogSession(Context context) {
+        BarService service = instance;
+        if (service == null || !logsPermitted(context) || !logsWanted(context)) return false;
+        boolean opened = service.logs.open();
+        service.notifyState();
+        return opened;
+    }
+
+    /** Explicit user action from settings: one more standard confirmation, even after an earlier decline. */
+    static void requestApproval(Context context) {
+        prefs(context).edit().putBoolean(LOG_DECLINED, false).apply();
+        launchBridge(context);
+    }
+
+    private static void launchBridge(Context context) {
+        try {
+            context.startActivity(new Intent(context, LogAccessActivity.class)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_NO_ANIMATION));
+        } catch (RuntimeException error) { Log.w("PadLog", "Approval bridge unavailable", error); }
+    }
 
     static void refreshConfiguration() {
         if (instance != null) instance.configure();
     }
 
     static boolean enabled(Context context) {
-        return context.getSharedPreferences("bar", MODE_PRIVATE).getBoolean("enabled", false);
+        return prefs(context).getBoolean("enabled", false);
     }
 
     static void start(Context context) {
-        context.getSharedPreferences("bar", MODE_PRIVATE).edit().putBoolean("enabled", true).remove("native_bar").apply();
+        prefs(context).edit().putBoolean("enabled", true).remove("native_bar").apply();
         if (instance != null) { running = true; instance.configure(); }
     }
 
     static void stop(Context context) {
-        context.getSharedPreferences("bar", MODE_PRIVATE).edit().putBoolean("enabled", false).apply();
+        prefs(context).edit().putBoolean("enabled", false).apply();
         running = false;
         if (instance != null) { instance.cancelPending(); instance.detach(); instance.configure(); }
         if (!BarGesture.restore(context)) android.widget.Toast.makeText(context,
@@ -84,8 +132,8 @@ public final class BarService extends AccessibilityService {
     static boolean granted(Context context) {
         // The manager's enabled-service API can omit an approved service while
         // it is being rebound. Approval and live readiness are separate states.
-        return BootRecovery.containsOwn(android.provider.Settings.Secure.getString(context.getContentResolver(),
-            android.provider.Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES));
+        return BootRecovery.containsOwn(Settings.Secure.getString(context.getContentResolver(),
+            Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES));
     }
 
     private final Runnable longPress = () -> {
@@ -95,14 +143,35 @@ public final class BarService extends AccessibilityService {
         launchSearch();
     };
 
-    private boolean maySearch() {
-        return enabled(this) && granted(this)
-                && getSystemService(PowerManager.class).isInteractive()
-                && !getSystemService(KeyguardManager.class).isKeyguardLocked();
+    private boolean unlockedScreen() {
+        return getSystemService(PowerManager.class).isInteractive()
+            && !getSystemService(KeyguardManager.class).isKeyguardLocked();
     }
 
-    private void nativeGesture() {
-        if (nativeMode(this) && maySearch() && nativeBridge != null && nativeBridge.reading()) launchSearch();
+    private boolean maySearch() { return enabled(this) && granted(this) && unlockedScreen(); }
+
+    /** Structural dispatch preconditions only (booleans and state), for distinguishing gate vs dispatch on device. */
+    private String dispatchState() {
+        PowerManager power = getSystemService(PowerManager.class);
+        return "enabled=" + enabled(this) + " native=" + nativeMode(this) + " power=" + power(this) + " granted=" + granted(this)
+            + " interactive=" + power.isInteractive() + " locked=" + getSystemService(KeyguardManager.class).isKeyguardLocked()
+            + " session=" + logs.state();
+    }
+
+    private void barGesture() {
+        if (nativeMode(this) && maySearch() && logs.state() == LogSession.ACTIVE) launchSearch();
+        else Log.i("PadBar", "bar dispatch skipped " + dispatchState());
+    }
+
+    private void powerGesture() {
+        if (!power(this) || !granted(this) || !unlockedScreen() || logs.state() != LogSession.ACTIVE) {
+            Log.i("PadPower", "power dispatch skipped " + dispatchState());
+            return;
+        }
+        Log.i("PadPower", "power dispatch -> GeminiSession.launch");
+        boolean started = GeminiSession.launch(this);
+        Log.i("PadPower", "GeminiSession.launch returned " + started);
+        if (!started) android.widget.Toast.makeText(this, "작은 Gemini를 열지 못했습니다.", android.widget.Toast.LENGTH_SHORT).show();
     }
 
     private void launchSearch() {
@@ -114,26 +183,56 @@ public final class BarService extends AccessibilityService {
         }
     }
 
-    private void nativeStateChanged() {
+    private void notifyState() {
         if (instance != this) return;
         configure();
         sendBroadcast(new Intent(STATE_CHANGED).setPackage(getPackageName()));
     }
 
+    private final LogSession.Listener logEvents = new LogSession.Listener() {
+        @Override public void stateChanged(boolean declined) {
+            if (declined) prefs(BarService.this).edit().putBoolean(LOG_DECLINED, true).apply();
+            notifyState();
+        }
+        @Override public void trigger(int kind) {
+            Log.i("PadLog", "trigger kind=" + kind + " instance=" + (instance == BarService.this));
+            if (kind == LogTrigger.BAR) barGesture();
+            else if (kind == LogTrigger.POWER) powerGesture();
+        }
+    };
+
+    /** First unlock after boot (or after the session was lost): at most AUTO_PROMPTS bridge windows per boot. */
+    private void maybeAutoPrompt() {
+        SharedPreferences bar = prefs(this);
+        int boot = Settings.Global.getInt(getContentResolver(), Settings.Global.BOOT_COUNT, -1);
+        if (bar.getInt(LOG_BOOT, -2) != boot)
+            bar.edit().putInt(LOG_BOOT, boot).putInt(LOG_AUTO, 0).putBoolean(LOG_DECLINED, false).apply();
+        int attempts = bar.getInt(LOG_AUTO, 0);
+        PowerManager power = getSystemService(PowerManager.class);
+        if (!LogTrigger.autoPrompt(granted(this) && logsWanted(this), logsPermitted(this), logs.state() != LogSession.OFF,
+                bridgeShowing(), power.isInteractive(), getSystemService(KeyguardManager.class).isKeyguardLocked(),
+                bar.getBoolean(LOG_DECLINED, false), attempts)) return;
+        bar.edit().putInt(LOG_AUTO, attempts + 1).apply();
+        launchBridge(this);
+    }
+
     private final BroadcastReceiver screen = new BroadcastReceiver() {
         @Override public void onReceive(Context context, Intent intent) {
-            if (Intent.ACTION_SCREEN_OFF.equals(intent.getAction())) {
-                cancelPending(); detach();
-                if (nativeBridge != null) nativeBridge.active(false);
-            }
-            else configure();
+            // The log session stays open across screen changes; only the touch window and OEM gesture follow the screen.
+            if (Intent.ACTION_SCREEN_OFF.equals(intent.getAction())) { cancelPending(); detach(); }
+            configure();
+            if (Intent.ACTION_USER_PRESENT.equals(intent.getAction())) maybeAutoPrompt();
         }
     };
 
     @Override public void onCreate() {
         super.onCreate();
         windows = getSystemService(WindowManager.class);
-        nativeBridge = new NativeBarBridge(this, handler, this::nativeStateChanged, this::nativeGesture);
+        int systemUi;
+        try { systemUi = getPackageManager().getApplicationInfo("com.android.systemui", 0).uid; }
+        catch (PackageManager.NameNotFoundException missing) { systemUi = -1; } // Bar events then never match.
+        int uid = getApplicationInfo().uid;
+        logs = new LogSession(handler, logEvents, systemUi, uid / 100000);
         IntentFilter filter = new IntentFilter(Intent.ACTION_SCREEN_OFF);
         filter.addAction(Intent.ACTION_SCREEN_ON);
         filter.addAction(Intent.ACTION_USER_PRESENT);
@@ -146,16 +245,15 @@ public final class BarService extends AccessibilityService {
     @Override protected void onServiceConnected() {
         super.onServiceConnected();
         instance = this;
-        nativeBridge.start();
-        getSharedPreferences("bar", MODE_PRIVATE).edit().putBoolean(BootRecovery.APPROVED, true).remove("native_bar").apply();
+        prefs(this).edit().putBoolean(BootRecovery.APPROVED, true).remove("native_bar").apply();
         running = enabled(this);
-        configure();
+        notifyState(); // configure + refresh any visible settings screen (it may predate this connection)
+        maybeAutoPrompt();
     }
 
     private void configure() {
         AccessibilityServiceInfo info = getServiceInfo();
         if (info == null) return;
-        nativeBridge.start(); // Publish the current accessibility-owned Binder endpoint.
         // Touch events belong to our own overlay. No other apps' window events.
         info.eventTypes = 0;
         info.packageNames = null;
@@ -164,16 +262,15 @@ public final class BarService extends AccessibilityService {
         running = enabled(this);
         handler.removeCallbacks(restoreTarget);
         handler.removeCallbacks(longPress);
-        if (!enabled(this)) { detach(); nativeBridge.active(false); }
+        if (!logsWanted(this) || !logsPermitted(this)) logs.close();
+        if (!enabled(this)) detach();
         else if (nativeMode(this)) {
             detach();
-            boolean active = maySearch() && BootRecovery.permitted(this) && NativeBarBridge.breenoDisabled(this);
-            nativeBridge.active(active);
-            // The OEM gesture is on only while the agent genuinely reads; paused or disconnected restores the original.
-            if (active && nativeBridge.reading()) BarGesture.enableBreenoGesture(this);
+            // The OEM gesture is on only while the session genuinely receives system logs; otherwise the original is restored.
+            if (maySearch() && BootRecovery.permitted(this) && LogSession.breenoDisabled(this) && logs.state() == LogSession.ACTIVE)
+                BarGesture.enableBreenoGesture(this);
             else BarGesture.restore(this);
         } else {
-            nativeBridge.active(false);
             attachAttempts = 0; handler.post(restoreTarget);
         }
     }
@@ -197,9 +294,7 @@ public final class BarService extends AccessibilityService {
 
     private void attach() {
         if (target != null && !target.isAttachedToWindow()) detach();
-        if (!enabled(this) || nativeMode(this) || !granted(this) || instance != this
-            || !getSystemService(PowerManager.class).isInteractive()
-            || getSystemService(KeyguardManager.class).isKeyguardLocked()) return;
+        if (!enabled(this) || nativeMode(this) || !granted(this) || instance != this || !unlockedScreen()) return;
         if (target != null) { BarGesture.disableBreenoGesture(this); return; }
         View view = new View(this);
         view.setContentDescription("하단 검색 길게 누르기 영역");
@@ -266,15 +361,14 @@ public final class BarService extends AccessibilityService {
         running = false;
         cancelPending();
         detach();
-        nativeBridge.close();
-        if (nativeMode(this)) BarGesture.restore(this); // No reader while unbound; reapplied after the next RUNNING.
+        logs.close();
+        if (nativeMode(this)) BarGesture.restore(this); // No reader while unbound; reapplied after the next approved session.
         unregisterReceiver(screen);
         super.onDestroy();
     }
 
     @Override public boolean onUnbind(Intent intent) {
-        String approved = android.provider.Settings.Secure.getString(getContentResolver(),
-            android.provider.Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES);
+        String approved = Settings.Secure.getString(getContentResolver(), Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES);
         if (!BootRecovery.containsOwn(approved)) BarGesture.restore(this);
         return super.onUnbind(intent);
     }

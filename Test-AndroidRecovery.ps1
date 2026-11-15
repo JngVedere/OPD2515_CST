@@ -2,6 +2,9 @@
 $ErrorActionPreference = 'Stop'
 $jar = Join-Path $Sdk 'platforms/android-37.0/android.jar'
 if (-not (Test-Path -LiteralPath $jar)) { throw 'Android SDK platform android-37.0 is required for this developer test.' }
+$hiddenApiJar = Join-Path $PSScriptRoot 'micts/fast-launch/build/deps/hiddenapibypass-6.1.jar'
+if (-not (Test-Path -LiteralPath $hiddenApiJar)) { throw 'Run micts/fast-launch/Build.ps1 first to prepare the pinned Gemini dependency.' }
+if ((Get-FileHash -LiteralPath $hiddenApiJar -Algorithm SHA256).Hash.ToLowerInvariant() -ne '6f50c4d202acb8152901716df3a1f94b2181e33aa0d14c9bdb2579cbc21c0832') { throw 'Unexpected Gemini dependency bytes' }
 $folder = Join-Path $PSScriptRoot ('qa/android-recovery-'+[guid]::NewGuid().ToString('N'))
 [void][IO.Directory]::CreateDirectory($folder)
 $harness = Join-Path $folder 'RecoveryHarness.java'
@@ -39,7 +42,7 @@ public final class RecoveryHarness {
 '@
 [IO.File]::WriteAllText($harness,$source,(New-Object Text.UTF8Encoding($false)))
 $sources = @(Get-ChildItem -LiteralPath (Join-Path $PSScriptRoot 'micts/fast-launch') -Filter *.java -File | Select-Object -ExpandProperty FullName)
-& javac.exe --release 17 -encoding UTF-8 -classpath $jar -d $folder @sources $harness
+& javac.exe --release 17 -encoding UTF-8 -classpath ($jar + ';' + $hiddenApiJar) -d $folder @sources $harness
 if ($LASTEXITCODE) { throw 'Recovery test compilation failed' }
 & java.exe -cp ($folder+';'+$jar) dev.padhelper.fastcts.RecoveryHarness
 if ($LASTEXITCODE) { throw 'Android recovery regression failed' }
@@ -405,11 +408,61 @@ if (-not $command -or $command.GetAttribute('exported',$namespaces.LookupNamespa
 $publicSettings = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'micts/fast-launch/SetupActivity.java'))
 if ($publicSettings -match 'get(?:Boolean|String|Int)Extra\s*\(\s*"setup_') { throw 'Public settings must not execute automation extras' }
 $securityChecks = 2
-$provider = $manifest.SelectSingleNode('/manifest/application/provider[@android:name=".NativeBarProvider"]',$namespaces)
-if (-not $provider -or $provider.GetAttribute('exported',$namespaces.LookupNamespace('android')) -ne 'true' -or
-    $provider.GetAttribute('permission',$namespaces.LookupNamespace('android')) -ne 'android.permission.DUMP' -or
-    $provider.GetAttribute('authorities',$namespaces.LookupNamespace('android')) -ne 'dev.padhelper.fastcts.nativebar') {
-    throw 'Native bar registration must require DUMP on the fixed app authority'
+if ($manifest.SelectNodes('/manifest/application/provider',$namespaces).Count -ne 0) {
+    throw 'The retired shell registration provider must not return; the app needs no content provider'
+}
+$securityChecks++
+$bridge = $manifest.SelectSingleNode('/manifest/application/activity[@android:name=".LogAccessActivity"]',$namespaces)
+if (-not $bridge -or $bridge.GetAttribute('exported',$namespaces.LookupNamespace('android')) -ne 'false' -or
+    $bridge.GetAttribute('excludeFromRecents',$namespaces.LookupNamespace('android')) -ne 'true' -or $bridge.SelectNodes('intent-filter').Count -ne 0) {
+    throw 'Log approval bridge must be internal, filterless and hidden from recents'
+}
+$securityChecks++
+$permissions = @($manifest.SelectNodes('/manifest/uses-permission',$namespaces) | ForEach-Object { $_.GetAttribute('name',$namespaces.LookupNamespace('android')) } | Sort-Object)
+if (($permissions -join ',') -cne 'android.permission.READ_LOGS,android.permission.RECEIVE_BOOT_COMPLETED,android.permission.WRITE_SECURE_SETTINGS') {
+    throw ('Unexpected permission set: ' + ($permissions -join ','))
+}
+$securityChecks++
+if ($manifest.OuterXml -match 'foregroundServiceType|FOREGROUND_SERVICE|SYSTEM_ALERT_WINDOW|android:process=') {
+    throw 'Log session must stay in the accessibility service: no foreground service, overlay or extra process'
+}
+$securityChecks++
+$appFolder = Join-Path $PSScriptRoot 'micts/fast-launch'
+foreach ($retired in @('NativeBarAgent','NativeBarBridge','NativeBarProtocol','NativeBarProvider','NativeBarWire')) {
+    if (Test-Path -LiteralPath (Join-Path $appFolder ($retired+'.java'))) { throw ('Retired ADB agent backend still present: '+$retired) }
+    $securityChecks++
+}
+$allSources = @{}
+Get-ChildItem -LiteralPath $appFolder -Filter *.java -File | ForEach-Object { $allSources[$_.Name] = [IO.File]::ReadAllText($_.FullName) }
+foreach ($name in $allSources.Keys) {
+    if ($allSources[$name] -match 'ProcessBuilder|Runtime\.getRuntime\(\)\.exec|/system/bin/logcat|app_process|NativeBarAgent') {
+        throw ('No logcat child, shell agent or command execution is allowed: '+$name)
+    }
+}
+$securityChecks++
+$opened = @($allSources.Keys | Where-Object { $_ -ne 'BarService.java' -and $allSources[$_] -match 'openLogSession\s*\(' })
+if (($opened -join ',') -cne 'LogAccessActivity.java') { throw 'Only the focused bridge may open a new log session' }
+$securityChecks++
+if ($allSources['LogSession.java'] -match 'FileOutputStream|openFileOutput|getSharedPreferences|Log\.[a-z]\([^;]*new String') {
+    throw 'Log session must not persist or re-log raw log content'
+}
+$securityChecks++
+if ($allSources['BarService.java'] -notmatch 'GeminiSession\.launch\(this\)') { throw 'Power trigger must dispatch to GeminiSession.launch' }
+$securityChecks++
+if ($allSources['LogSession.java'] -notmatch '(?s)handler\.post\(\(\) -> \{\s*if \(!current\(session\)\) return;\s*long delivered = System\.currentTimeMillis\(\);\s*if \(LogTrigger\.deliverable\(entry, delivered\)\) listener\.trigger\(kind\);') {
+    throw 'Queued triggers must recheck session and freshness on the main thread before dispatch'
+}
+$securityChecks++
+if (([regex]::Matches($allSources['LogSession.java'], 'listener\.trigger\(')).Count -ne 1) { throw 'The freshness-checked post must be the only trigger dispatch' }
+$securityChecks++
+if ($allSources['LogSession.java'] -notmatch 'input\.read\(packet, 0, packet\.length\)\)\s*>\s*0') { throw 'A zero-length SEQPACKET read (EOF) must end the session, not spin' }
+$securityChecks++
+if ($allSources['LogSession.java'] -notmatch 'diagnostics < MAX_DIAGNOSTICS' -or $allSources['LogSession.java'] -match 'Log\.[a-z]\([^;]*new String\(packet') {
+    throw 'Log diagnostics must stay bounded and structural'
+}
+$securityChecks++
+if ($allSources['GeminiSession.java'] -match 'ACTION_ASSIST|ACTION_VOICE_COMMAND|VOICE_ASSIST|ACTION_SEARCH_LONG_PRESS|getLaunchIntentForPackage|makeMainActivity|CATEGORY_LAUNCHER|startActivity') {
+    throw 'Small Gemini must not fall back to launcher, ASSIST or voice-command intents'
 }
 $securityChecks++
 $launcher = $manifest.SelectSingleNode('/manifest/application/activity[@android:name=".MainActivity"]',$namespaces)
@@ -453,4 +506,4 @@ foreach ($capability in @('canRetrieveWindowContent','canPerformGestures','canTa
     }
     $securityChecks++
 }
-Write-Output ('PASS: '+$securityChecks+' automation and accessibility security checks; retired window handoff and screen capabilities remain disabled.')
+Write-Output ('PASS: '+$securityChecks+' automation, log-session and accessibility security checks; retired agent, window handoff and screen capabilities remain disabled.')

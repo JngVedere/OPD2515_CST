@@ -12,12 +12,38 @@ function Run([string]$Exe, [string[]]$Arguments) {
     & $Exe @Arguments
     if ($LASTEXITCODE -ne 0) { throw "$Exe exited with $LASTEXITCODE" }
 }
+# Keep the single runtime dependency reproducible; it adds no Android permissions.
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+$dependencyDir = Join-Path $build 'deps'
+[void][IO.Directory]::CreateDirectory($dependencyDir)
+$dependency = Join-Path $dependencyDir 'hiddenapibypass-6.1.aar'
+$hiddenApiJar = Join-Path $dependencyDir 'hiddenapibypass-6.1.jar'
+$dependencyHash = 'e3161dd21c97a4540b1698a33f7062aeaa1450008e1e2176070e5380f7a6324c'
+$jarHash = '6f50c4d202acb8152901716df3a1f94b2181e33aa0d14c9bdb2579cbc21c0832'
+if (-not (Test-Path -LiteralPath $dependency)) {
+    $download = $dependency + '.' + [guid]::NewGuid().ToString('N') + '.tmp'
+    try {
+        Invoke-WebRequest -UseBasicParsing -TimeoutSec 60 -Uri 'https://repo.maven.apache.org/maven2/org/lsposed/hiddenapibypass/hiddenapibypass/6.1/hiddenapibypass-6.1.aar' -OutFile $download
+        if ((Get-FileHash -LiteralPath $download -Algorithm SHA256).Hash.ToLowerInvariant() -ne $dependencyHash) { throw 'HiddenApiBypass download hash mismatch' }
+        [IO.File]::Move($download, $dependency)
+    } finally {
+        if (Test-Path -LiteralPath $download) { Remove-Item -LiteralPath $download }
+    }
+}
+if ((Get-FileHash -LiteralPath $dependency -Algorithm SHA256).Hash.ToLowerInvariant() -ne $dependencyHash) { throw 'Cached HiddenApiBypass hash mismatch' }
+$archive = [IO.Compression.ZipFile]::OpenRead($dependency)
+try {
+    $entry = $archive.GetEntry('classes.jar')
+    if ($null -eq $entry) { throw 'HiddenApiBypass classes.jar missing' }
+    [IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $hiddenApiJar, $true)
+} finally { $archive.Dispose() }
+if ((Get-FileHash -LiteralPath $hiddenApiJar -Algorithm SHA256).Hash.ToLowerInvariant() -ne $jarHash) { throw 'HiddenApiBypass classes hash mismatch' }
 Run (Join-Path $tools 'aapt2.exe') @('compile','--dir',"$PSScriptRoot/res",'-o',"$build/resources.zip")
 Run (Join-Path $tools 'aapt2.exe') @('link','-I',$androidJar,'--manifest',"$PSScriptRoot/AndroidManifest.xml",'--min-sdk-version','30','--target-sdk-version','36','--version-code',[string]$version.VersionCode,'--version-name',[string]$version.Version,'-o',"$build/unsigned.apk","$build/resources.zip")
 $sources = @(Get-ChildItem -LiteralPath $PSScriptRoot -Filter *.java -File | Select-Object -ExpandProperty FullName)
-Run 'javac.exe' (@('--release','17','-encoding','UTF-8','-classpath',$androidJar,'-d',"$build/classes") + $sources)
+Run 'javac.exe' (@('--release','17','-encoding','UTF-8','-classpath',($androidJar + ';' + $hiddenApiJar),'-d',"$build/classes") + $sources)
 $classes = @(Get-ChildItem -LiteralPath "$build/classes" -Filter *.class -File -Recurse | Select-Object -ExpandProperty FullName)
-Run 'java.exe' (@('-cp',"$tools/lib/d8.jar",'com.android.tools.r8.D8','--lib',$androidJar,'--min-api','30','--output',"$build/dex") + $classes)
+Run 'java.exe' (@('-cp',"$tools/lib/d8.jar",'com.android.tools.r8.D8','--lib',$androidJar,'--min-api','30','--output',"$build/dex",$hiddenApiJar) + $classes)
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 $zip = [IO.Compression.ZipFile]::Open("$build/unsigned.apk",'Update')
 try { [void][IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zip,"$build/dex/classes.dex",'classes.dex') } finally { $zip.Dispose() }
@@ -36,12 +62,14 @@ if (-not ($metadata -match ("^package: name='dev\.padhelper\.fastcts' versionCod
     throw 'Signed APK package/version does not match App-Version.json'
 }
 if ($metadata -match '^launchable-activity:') { throw 'The app must have no launcher icon.' }
-$allowed = @('android.permission.RECEIVE_BOOT_COMPLETED','android.permission.WRITE_SECURE_SETTINGS')
+# READ_LOGS is granted once over ADB; no foreground-service, overlay, or network permission is allowed.
+$allowed = @('android.permission.RECEIVE_BOOT_COMPLETED','android.permission.WRITE_SECURE_SETTINGS','android.permission.READ_LOGS')
 foreach ($line in $metadata) {
     if ($line -match "^uses-permission(?:-sdk-\d+)?: name='([^']+)'") {
         if ($Matches[1] -notin $allowed) { throw "Unexpected permission: $($Matches[1])" }
     }
 }
+if (-not ($metadata -match "^uses-permission: name='android\.permission\.READ_LOGS'")) { throw 'The shared log trigger requires READ_LOGS.' }
 $outputApk = Join-Path $PSScriptRoot 'MiCTS-Quick.apk'
 if (Test-Path -LiteralPath $outputApk) { [IO.File]::Replace($candidate, $outputApk, [NullString]::Value) }
 else { [IO.File]::Move($candidate, $outputApk) }
