@@ -1,4 +1,4 @@
-# 하단 검색
+# Circle-to-Search Trigger
 
 > 다른 기기에서도 동작할 수 있으나, 동작을 보장하지 않습니다. 동작 테스트는 **OPPO Pad Mini OPD2515에서만** 진행했습니다.
 
