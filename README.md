@@ -70,7 +70,7 @@ Google 서비스가 없는 기기는 먼저 기기의 Google 서비스와 Play �
 1. [다운로드 페이지](https://github.com/JngVedere/OPD2515_CST/releases/latest)에서 **`Bottom-Search`로 시작하는 `.apk` 파일**을 받습니다.
 2. 태블릿에서 APK를 열어 설치합니다. 설치가 차단되면 해당 파일을 연 앱의 **이 출처 허용**을 켭니다.
 3. 태블릿 **`설정 → 앱 → 앱 관리 → 'Circle-to-Search Trigger' → 앱 추가 설정`** 경로로 Circle-to-Search Trigger 설정을 엽니다.
-4. **`연결 앱 → 기본 어시스턴트 설정**에서 Google을 선택 및 **앱 선택 → 서클 투 서치`**, 이후 **화면 및 앱 데이터 사용**을 **허용**합니다.
+4. **`연결 앱 → 기본 어시스턴트 설정`**에서 Google을 선택 및 **`앱 선택 → 서클 투 서치`**, 이후 **화면 및 앱 데이터 사용**을 **허용**합니다.
 5. 태블릿 **`설정 → 앱 → 앱 관리 → 'Circle-to-Search Trigger' → 권한 → 우측 상단의 ... → 권한 제한 해제`** 경로로 Circle-to-Search Trigger 설정을 엽니다.
 6. 앱 내 **접근성 설정**에서 **`다운로드한 앱 → Circle-to-Search Trigger`**을 켭니다.
 7.  앱 내 **`실행 방식 → '하단 영역 인식' 또는 'ColorOS 기본 하단바..' → 상단의 '사용 시작'`**
