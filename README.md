@@ -83,10 +83,10 @@ Google 서비스가 없는 기기는 먼저 기기의 Google 서비스와 Play �
 4. USB 디버깅을 허용한 태블릿을 ADB가 준비된 컴퓨터에 연결합니다. (태블릿 : **개발자 옵션 → USB 디버깅 활성화**, PC : [ADB](https://developer.android.com/tools/releases/platform-tools?hl=ko))
 5. **개발자 옵션 → Disable System Optimization → 켬**으로 세팅합니다. (옵션이 보이지 않는다면 시스템 언어를 English로 바꾸고 재시도 해주세요. 사용 시작 후에는 언어를 기존 언어로 바꿔도 됩니다.)
 6. **아래 명령어**를 컴퓨터 CMD 혹은 POWERSHELL에서 실행합니다. (ADB 필요)
-'''powershell
+```POWERSHELL
 adb shell pm grant --user 0 dev.padhelper.fastcts android.permission.WRITE_SECURE_SETTINGS
 adb shell pm grant --user 0 dev.padhelper.fastcts android.permission.READ_LOGS
-'''
+```
 7. 앱 내 **기기 로그 접근 승인 요청 → 일회성 액세스 허용**을 선택합니다.
 8. 앱 내 상단의 **사용 시작** 클릭
 9. 앱의 연결 상태를 확인한 뒤 앱 내 **설정 닫기**를 눌러 닫습니다.
