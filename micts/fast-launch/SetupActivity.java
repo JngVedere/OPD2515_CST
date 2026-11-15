@@ -28,7 +28,7 @@ public final class SetupActivity extends Activity {
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
         preferences = getSharedPreferences("bar", MODE_PRIVATE);
-        setTitle("하단 검색");
+        setTitle("Circle-to-Search Trigger");
         if (getActionBar() != null) getActionBar().hide();
         body = new LinearLayout(this);
         body.setOrientation(LinearLayout.VERTICAL);
@@ -43,7 +43,7 @@ public final class SetupActivity extends Activity {
         });
         scroll.addView(body);
         setContentView(scroll);
-        text("하단 검색", 24).setTypeface(null, android.graphics.Typeface.BOLD);
+        text("Circle-to-Search Trigger", 24).setTypeface(null, android.graphics.Typeface.BOLD);
         text("하단 중앙을 길게 눌러 선택한 앱을 엽니다.", 18);
         status = text("", 16);
         logStatus = text("", 16);
@@ -119,20 +119,20 @@ public final class SetupActivity extends Activity {
         button("빠른 설정에 버튼 추가", () -> {
             if (Build.VERSION.SDK_INT >= 33) {
                 getSystemService(StatusBarManager.class).requestAddTileService(
-                    new ComponentName(this, BarTile.class), "하단 검색",
+                    new ComponentName(this, BarTile.class), "Circle-to-Search Trigger",
                     Icon.createWithResource(this, android.R.drawable.ic_menu_search),
                     getMainExecutor(), result -> { });
-            } else Toast.makeText(this, "빠른 설정의 편집 화면에서 하단 검색 타일을 직접 추가해주세요.", Toast.LENGTH_LONG).show();
+            } else Toast.makeText(this, "빠른 설정의 편집 화면에서 Circle-to-Search Trigger 타일을 직접 추가해주세요.", Toast.LENGTH_LONG).show();
         });
         button("자동 실행 설정", () -> {
-            Toast.makeText(this, "설정에서 앱 → 자동 실행 → 하단 검색을 허용해주세요.", Toast.LENGTH_LONG).show();
+            Toast.makeText(this, "설정에서 앱 → 자동 실행 → Circle-to-Search Trigger을 허용해주세요.", Toast.LENGTH_LONG).show();
             startActivity(new Intent(Settings.ACTION_SETTINGS));
         });
         button("앱 정보와 절전 설정", () -> startActivity(new Intent(
             Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:" + getPackageName()))));
         button("최근 앱 정리 제외 설정", () -> {
             recentSwitch.setChecked(true);
-            Toast.makeText(this, "최근 앱에서 하단 검색 카드를 잠근 뒤, 필요하면 최근 앱 표시를 다시 꺼주세요.", Toast.LENGTH_LONG).show();
+            Toast.makeText(this, "최근 앱에서 Circle-to-Search Trigger 카드를 잠근 뒤, 필요하면 최근 앱 표시를 다시 꺼주세요.", Toast.LENGTH_LONG).show();
         });
         button("설정 닫기", () -> { applyRecentVisibility(); moveTaskToBack(true); });
         text("상태 알림 없이 실행됩니다. 선택한 방식으로 연결 앱을 엽니다. 화면 내용 읽기와 캡처는 사용하지 않습니다.", 14);
@@ -157,7 +157,7 @@ public final class SetupActivity extends Activity {
                 + ". 켜져 있으면 기본 바는 동작하지 않고, 전원 버튼에서 Breeno가 함께 열릴 수 있습니다. 원하는 경우에만 직접 실행하세요.\nadb shell pm disable-user --user " + user + " com.heytap.speechassist"
                 + "\n\n앱이 스스로 권한을 부여하거나 Breeno를 끄지 않습니다.")
             .setPositiveButton("권한 명령 복사", (dialog, which) -> {
-                getSystemService(android.content.ClipboardManager.class).setPrimaryClip(ClipData.newPlainText("하단 검색 ADB 설정", command));
+                getSystemService(android.content.ClipboardManager.class).setPrimaryClip(ClipData.newPlainText("Circle-to-Search Trigger ADB 설정", command));
                 Toast.makeText(this, "명령을 복사했습니다.", Toast.LENGTH_SHORT).show();
             }).setNegativeButton("닫기", null).show();
     }
@@ -260,7 +260,7 @@ public final class SetupActivity extends Activity {
     }
 
     private void openAccessibility() {
-        Toast.makeText(this, "다운로드한 앱에서 하단 검색을 켜주세요.", Toast.LENGTH_LONG).show();
+        Toast.makeText(this, "다운로드한 앱에서 Circle-to-Search Trigger을 켜주세요.", Toast.LENGTH_LONG).show();
         startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS));
     }
 

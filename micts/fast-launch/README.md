@@ -1,6 +1,6 @@
-# 하단 검색 0.2.7 개발 안내
+# Circle-to-Search Trigger 0.2.7.1 개발 안내
 
-Android 앱 `dev.padhelper.fastcts`, 버전 **0.2.7 / 코드 15**입니다. 대상은 OPD2515 / ColorOS 17 CN / Android 17입니다. 사용자 설치·권한·앱 설정 열기는 [사용 가이드](../../HOW%20TO%20USE.MD)를 참고하세요.
+Android 앱 `dev.padhelper.fastcts`, 버전 **0.2.7.1 / 코드 16**입니다. 대상은 OPD2515 / ColorOS 17 CN / Android 17입니다. 사용자 설치·권한·앱 설정 열기는 [사용 가이드](../../HOW%20TO%20USE.MD)를 참고하세요.
 
 `GeminiSession.launch(Context)`는 현재 Google 음성 서비스의 일반 어시스턴트 세션을 요청합니다. Google의 모바일 어시스턴트를 Gemini로 설정해야 작은 Gemini 창이 열립니다. 전체 앱 실행이나 ASSIST intent로 대체하지 않습니다.
 
@@ -69,7 +69,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Build-Release.ps1
 - `Test-NativeBar.ps1`: 실제 `LogTrigger` 코드로 패킷 헤더 파싱, 작성자 UID·버퍼·태그·형식 분류, 자기 UID heartbeat 배제, 신선도·중복·재생 차단, 자동 요청 한도를 JDK만으로 검사합니다.
 - `Test-AndroidRecovery.ps1`: 전체 소스 컴파일, 부팅 복구·제스처 상태 검사와 함께 Provider 부재, 브리지 비노출, 정확한 권한 집합, 포그라운드 서비스·오버레이·추가 프로세스 부재, 제거된 에이전트 소스, 명령 실행 부재, 브리지 전용 연결 열기, 로그 비저장, 전원→`GeminiSession.launch` 연결, Gemini의 launcher/ASSIST 대체 금지를 검사합니다.
 
-검증한 후보만 `MiCTS-Quick.apk`로 교체하고 루트 `App-Release.json`을 갱신합니다. 최종 배포는 `dist/Bottom-Search-0.2.7.apk`와 `.apk.sha256`입니다. 기존 설치 업데이트에는 같은 서명이 필요합니다. `build/keys/`와 개인 기기 기록은 Git·배포에서 제외합니다.
+검증한 후보만 `MiCTS-Quick.apk`로 교체하고 루트 `App-Release.json`을 갱신합니다. 최종 배포는 `dist/Circle-to-Search-Trigger-0.2.7.1.apk`와 `.apk.sha256`입니다. 기존 설치 업데이트에는 같은 서명이 필요합니다. `build/keys/`와 개인 기기 기록은 Git·배포에서 제외합니다.
 
 ## 검증과 제한
 

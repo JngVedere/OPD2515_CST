@@ -33,7 +33,7 @@ $apk = Join-Path $app 'MiCTS-Quick.apk'
 $version = [pscustomobject]@{Version='2.8.0';VersionCode=12}
 $versionPath = Join-Path $app 'App-Version.json'
 Save-Json $version $versionPath
-$release = [pscustomobject]@{Schema=1;Package='dev.padhelper.fastcts';Version=$version.Version;VersionCode=$version.VersionCode;FileName=('Bottom-Search-'+$version.Version+'.apk');SHA256=(Get-FileHash -LiteralPath $apk -Algorithm SHA256).Hash.ToLowerInvariant()}
+$release = [pscustomobject]@{Schema=1;Package='dev.padhelper.fastcts';Version=$version.Version;VersionCode=$version.VersionCode;FileName=('Circle-to-Search-Trigger-'+$version.Version+'.apk');SHA256=(Get-FileHash -LiteralPath $apk -Algorithm SHA256).Hash.ToLowerInvariant()}
 $metadata = Join-Path $fixture 'App-Release.json'
 Save-Json $release $metadata
 # A release must work without loading any archived desktop implementation.

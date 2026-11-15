@@ -297,7 +297,7 @@ public final class BarService extends AccessibilityService {
         if (!enabled(this) || nativeMode(this) || !granted(this) || instance != this || !unlockedScreen()) return;
         if (target != null) { BarGesture.disableBreenoGesture(this); return; }
         View view = new View(this);
-        view.setContentDescription("하단 검색 길게 누르기 영역");
+        view.setContentDescription("Circle-to-Search Trigger 길게 누르기 영역");
         int slop = ViewConfiguration.get(this).getScaledTouchSlop();
         view.setOnTouchListener((v, event) -> {
             switch (event.getActionMasked()) {

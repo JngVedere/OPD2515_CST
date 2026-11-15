@@ -7,8 +7,8 @@ $version = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'micts/fast-launch/
 if ($release.Schema -ne 1 -or $release.Package -cne 'dev.padhelper.fastcts') { throw 'Invalid app release schema or package.' }
 if ($release.Version -cnotmatch '^\d+\.\d+\.\d+(?:[-.A-Za-z0-9]+)?$' -or [long]$release.VersionCode -lt 1) { throw 'Invalid app release version.' }
 if ($release.Version -cne $version.Version -or [long]$release.VersionCode -ne [long]$version.VersionCode) { throw 'App release metadata is stale. Rebuild the Android app first.' }
-$expectedName = 'Bottom-Search-' + $release.Version + '.apk'
-if ($release.FileName -cne $expectedName -or $release.FileName -cnotmatch '^Bottom-Search-[0-9A-Za-z.-]+\.apk$') { throw 'Invalid app release file name.' }
+$expectedName = 'Circle-to-Search-Trigger-' + $release.Version + '.apk'
+if ($release.FileName -cne $expectedName -or $release.FileName -cnotmatch '^Circle-to-Search-Trigger-[0-9A-Za-z.-]+\.apk$') { throw 'Invalid app release file name.' }
 if ($release.SHA256 -cnotmatch '^[a-fA-F0-9]{64}$') { throw 'Invalid app release SHA-256.' }
 
 $apk = Join-Path $PSScriptRoot 'micts/fast-launch/MiCTS-Quick.apk'

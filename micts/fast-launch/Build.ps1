@@ -79,7 +79,7 @@ $release = [ordered]@{
     Package = 'dev.padhelper.fastcts'
     Version = [string]$version.Version
     VersionCode = [int]$version.VersionCode
-    FileName = 'Bottom-Search-' + $version.Version + '.apk'
+    FileName = 'Circle-to-Search-Trigger-' + $version.Version + '.apk'
     SHA256 = $hash.Hash.ToLowerInvariant()
 }
 $releasePath = Join-Path $PSScriptRoot '../../App-Release.json'
