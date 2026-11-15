@@ -1,12 +1,12 @@
 # 하단 검색 사용 가이드
 
-현재 앱은 **하단 검색 2.9.0 / 버전 코드 13**입니다. 패키지는 `dev.padhelper.fastcts`, 대상은 **OPPO Pad Mini OPD2515 / ColorOS 17 CN / Android 17**입니다. 다른 기기·펌웨어는 별도로 확인해야 합니다. 루팅과 부트로더 해제는 사용하지 않습니다.
+현재 앱은 **하단 검색 0.2.6 / 버전 코드 14**이며, 최초 공개 빌드입니다. 패키지는 `dev.padhelper.fastcts`, 대상은 **OPPO Pad Mini OPD2515 / ColorOS 17 CN / Android 17**입니다. 다른 기기·펌웨어는 별도로 확인해야 합니다. 루팅과 부트로더 해제는 사용하지 않습니다.
 
 제품은 Android 앱이며 기본 하단 영역 방식은 태블릿에서 설정합니다. 선택 권한 관리와 ColorOS 기본 바 방식 활성화에는 개발자용 ADB를 직접 사용합니다. Windows GUI·앱 정리·원클릭 설치 마법사는 지원 종료했습니다.
 
 ## 1. 설치와 Google 준비
 
-배포 파일은 `Bottom-Search-2.9.0.apk`와 `Bottom-Search-2.9.0.apk.sha256`입니다. APK를 태블릿에서 직접 눌러 설치합니다. 필요하면 `Get-FileHash -Algorithm SHA256` 결과를 함께 받은 체크섬과 비교합니다. 같은 서명의 업데이트를 사용하며 기존 앱 제거는 설정을 지웁니다.
+배포 파일은 `Bottom-Search-0.2.6.apk`와 `Bottom-Search-0.2.6.apk.sha256`입니다. APK를 태블릿에서 직접 눌러 설치합니다. 필요하면 `Get-FileHash -Algorithm SHA256` 결과를 함께 받은 체크섬과 비교합니다. 같은 서명의 업데이트를 사용하며 기존 앱 제거는 설정을 지웁니다.
 
 | 구성 | 준비 방법 |
 | --- | --- |
@@ -165,7 +165,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Build-Release.ps1 -Bui
 
 Android 복구·보안 147개, 기본 바 이벤트·시각 정책 67개, 배포 49개로 **263개 검사**를 통과했습니다. 기본 바 정책 검사는 `Test-NativeBar.ps1`에서 실제 이벤트 판별 코드로 실행합니다. Binder·Android 정규식·시스템 제스처의 실제 동작은 별도의 실기기 시험으로 확인했습니다. 과거 Windows 프로그램의 검사 개수는 합산하지 않습니다.
 
-`App-Version.json`은 버전 선언, 루트 `App-Release.json`은 APK 검증 정보입니다. 후보 APK의 서명·패키지·버전·권한·런처 검사를 통과한 뒤 기존 결과를 교체하고, `dist/Bottom-Search-2.9.0.apk`와 `.apk.sha256`을 배포합니다. Windows 프로그램·설치 ZIP은 포함하지 않습니다. 같은 서명의 업데이트를 유지하고 키·개인 기록은 Git과 배포에 포함하지 않습니다.
+`App-Version.json`은 버전 선언, 루트 `App-Release.json`은 APK 검증 정보입니다. 후보 APK의 서명·패키지·버전·권한·런처 검사를 통과한 뒤 기존 결과를 교체하고, `dist/Bottom-Search-0.2.6.apk`와 `.apk.sha256`을 배포합니다. Windows 프로그램·설치 ZIP은 포함하지 않습니다. 같은 서명의 업데이트를 유지하고 키·개인 기록은 Git과 배포에 포함하지 않습니다.
 
 ## 8. 검증 기록과 보관 자료
 

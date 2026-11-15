@@ -1,6 +1,6 @@
-# 하단 검색 2.9 개발 안내
+# 하단 검색 0.2.6 개발 안내
 
-Android 앱 `dev.padhelper.fastcts`, 버전 **2.9.0 / 코드 13**입니다. OPD2515 / ColorOS 17 CN / Android 17에서 확인했습니다. 사용자 설치·권한·앱 설정 열기는 [사용 가이드](../../HOW%20TO%20USE.MD)를 참고하세요.
+Android 앱 `dev.padhelper.fastcts`, 최초 공개 버전 **0.2.6 / 코드 14**입니다. 내부 개발 버전 2.9.0을 바탕으로 공개 버전 번호를 부여했습니다. OPD2515 / ColorOS 17 CN / Android 17에서 확인했습니다. 사용자 설치·권한·앱 설정 열기는 [사용 가이드](../../HOW%20TO%20USE.MD)를 참고하세요.
 
 ## 두 실행 방식
 
@@ -58,7 +58,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Test-Release.ps1
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Build-Release.ps1
 ```
 
-검증한 후보만 `MiCTS-Quick.apk`로 교체하고 루트 `App-Release.json`을 갱신합니다. 최종 배포는 `dist/Bottom-Search-2.9.0.apk`와 `.apk.sha256`입니다. 기존 설치 업데이트에는 같은 서명이 필요합니다. `build/keys/`와 개인 기기 기록은 Git·배포에서 제외합니다.
+검증한 후보만 `MiCTS-Quick.apk`로 교체하고 루트 `App-Release.json`을 갱신합니다. 최종 배포는 `dist/Bottom-Search-0.2.6.apk`와 `.apk.sha256`입니다. 기존 설치 업데이트에는 같은 서명이 필요합니다. `build/keys/`와 개인 기기 기록은 Git·배포에서 제외합니다.
 
 ## 검증과 제한
 
