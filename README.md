@@ -26,7 +26,7 @@ OPPO Pad Mini에서 Google 서클 투 서치를 편하게 열 수 있도록 도�
 서클 투 서치를 사용하려면 다음 앱을 별도로 준비해주세요.
 
 - **[Google](https://play.google.com/store/apps/details?id=com.google.android.googlequicksearchbox)** — Google LLC에서 배포하는 앱
-- **[Google Speech Recognition & SYnthesis](https://play.google.com/store/search?q=google+speech+services&c=apps)** - 호환성을 위해 권장
+- **[Google Speech Recognition & Synthesis](https://play.google.com/store/search?q=google+speech+services&c=apps)** - 호환성을 위해 권장
 - **[MiCTS 2.6](https://github.com/parallelcc/MiCTS/releases/tag/v2.6)** — 서클 투 서치 실행에 필요
 
 Google 서비스가 없는 기기는 먼저 기기의 Google 서비스와 Play 스토어를 준비해주세요. 
