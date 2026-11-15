@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="accessibility_description">하단 중앙의 투명한 터치 영역을 길게 눌러 서클 투 서치 또는 선택한 앱을 바로 엽니다. 다른 앱의 창 이벤트를 구독하지 않습니다. 화면 내용 읽기, 입력 수집, 화면 캡처와 제스처 주입은 사용하지 않습니다. 일반 화면 위 표시 권한과 지속 알림은 필요하지 않습니다.</string>
+    <style name="TransparentTrigger" parent="@android:style/Theme.Translucent.NoTitleBar">
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:backgroundDimEnabled">false</item>
+        <item name="android:windowDrawsSystemBarBackgrounds">true</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:enforceStatusBarContrast">false</item>
+        <item name="android:enforceNavigationBarContrast">false</item>
+    </style>
+</resources>

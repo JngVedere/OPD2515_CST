@@ -1,0 +1,55 @@
+# This repository publishes only the current Android app and its build/test docs.
+# Everything else in this working folder stays local by default.
+/*
+!/.gitignore
+!/README.md
+!/HOW TO USE.MD
+!/App-Release.json
+!/Build-Release.ps1
+!/Test-AndroidRecovery.ps1
+!/Test-NativeBar.ps1
+!/Test-Release.ps1
+
+!/micts/
+/micts/*
+!/micts/fast-launch/
+/micts/fast-launch/*
+!/micts/fast-launch/*.java
+!/micts/fast-launch/AndroidManifest.xml
+!/micts/fast-launch/App-Version.json
+!/micts/fast-launch/Build.ps1
+!/micts/fast-launch/README.md
+!/micts/fast-launch/res/
+!/micts/fast-launch/res/**
+
+# Generated files and credentials are excluded even inside allowed folders.
+**/build/
+**/.gradle/
+**/.kotlin/
+*.apk
+*.aab
+*.apks
+*.idsig
+*.class
+*.dex
+*.zip
+*.jks
+*.keystore
+*.p12
+*.pfx
+*.pem
+*.key
+adbkey
+adbkey.pub
+key.properties
+keystore.properties
+signing.properties
+local.properties
+.env
+.env.*
+credentials*.json
+secrets*.json
+*.log
+*.tmp
+*.bak
+*~
