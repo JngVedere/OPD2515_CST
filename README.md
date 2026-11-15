@@ -120,3 +120,13 @@ Google 앱과 화면 내용에 따라 전환이 지연될 수 있습니다. 하�
 
 - [MiCTS](https://github.com/parallelcc/MiCTS) — 서클 투 서치 실행
 - [ColorGoogle](https://github.com/joeyandu/ColorGoogle) — ColorOS 기본 바 실행 방식의 참고 프로젝트
+
+## AI 도구 활용
+
+기능과 사용 방향을 직접 정하고, 개발과 검토 과정에 다음 도구를 활용했습니다.
+
+| 도구 | 활용 방식 |
+| --- | --- |
+| **CODEX** | 요구사항 정리와 작업 조율, 앱 구현·수정, ADB를 통한 실기기 테스트와 문제 확인에 활용했습니다. |
+| **CLAUDE CODE** | 일부 개발 작업을 위임하고, 코드 리뷰와 버그 분석을 요청하는 데 활용했습니다. |
+| **GEMINI** | 문서 검토에 활용했습니다. |
