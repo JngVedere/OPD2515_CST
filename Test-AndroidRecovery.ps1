@@ -629,11 +629,13 @@ $service = $allSources['BarService.java']
 $method = '(?:(?!\r?\n    (?:private|static|@Override)).)*' # stays inside one method body
 $repairUsers = @($allSources.Keys | Where-Object { $_ -ne 'VoiceRepair.java' -and $allSources[$_] -match 'VoiceRepair\.(run|begin|prepare)\(' } | Sort-Object)
 if (($repairUsers -join ',') -cne 'BarService.java,SetupActivity.java' -or
-    ([regex]::Matches($service, 'VoiceRepair\.(run|begin|prepare)\(')).Count -ne 1 -or
+    ([regex]::Matches($service, 'VoiceRepair\.(run|begin|prepare)\(')).Count -ne 2 -or
     $service -notmatch ('(?s)private void powerGesture\(\) \{' + $method + 'VoiceRepair\.prepare\(app\)') -or
+    $service -notmatch ('(?s)private final Runnable warm = \(\) -> \{' + $method + '!power\(this\)' + $method + 'VoiceRepair\.run\(app\)') -or
+    $service -notmatch 'else if \(kind == LogTrigger\.GOOGLE_DIED\) googleDied\(\);' -or
     ([regex]::Matches($allSources['SetupActivity.java'], 'VoiceRepair\.(run|begin|prepare)\(')).Count -ne 1 -or
     $allSources['SetupActivity.java'] -notmatch ('(?s)private void repairVoice\(\) \{' + $method + 'VoiceRepair\.run\(app\)')) {
-    throw 'Google voice rebind runs only per accepted power press and from the explicit repair button (never BAR/touch CTS)'
+    throw 'Google voice rebind runs only per accepted power press, the power-option warm-up after a Google :interactor kill, and the explicit repair button (never BAR/touch CTS)'
 }
 $securityChecks++
 if ($service -notmatch 'VoiceRepair\.recover\(this\)') { throw 'Service start must finish an interrupted voice rebind' }

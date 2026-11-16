@@ -66,6 +66,23 @@ public final class LogTriggerHarness {
         for (int lid : new int[]{0, 1, 2, 4, 5, 7})
             check(kind(entry(lid, 1000, TIME, V, POWER_TAG, POWER_TEXT)) == LogTrigger.NONE, "Power marker outside the system buffer (lid " + lid + ") is rejected");
 
+        // Observed OPD2515 after recents "clear all": system_server UserAwareMgr INFO line for Google's :interactor.
+        String gsa = "com.google.android.googlequicksearchbox", killTag = "UserAwareMgr";
+        String killed = "process killed: {pkgName='" + gsa + "', serviceName='', procName=" + gsa + ":interactor, pid=30058, uid=10371, appId=0, owner='null', flags='fg1', renderTid=0, hwuiTids=null, glTids=null, threadInfos=null, mVideoActivityList=[], mStates=0}";
+        check(kind(system(I, killTag, killed)) == LogTrigger.GOOGLE_DIED, "Observed Google :interactor kill is GOOGLE_DIED");
+        check(kind(system(I, killTag, killed.replace(":interactor", ":search"))) == LogTrigger.NONE, "Other Google processes are ignored");
+        check(kind(system(I, killTag, killed.replace("pkgName='" + gsa, "pkgName='com.example.app"))) == LogTrigger.NONE, "Another package naming the interactor is ignored");
+        check(kind(system(I, killTag, killed + " procName=x")) == LogTrigger.NONE, "A second procName is rejected");
+        check(kind(system(W, killTag, killed)) == LogTrigger.NONE, "Kill line must be INFO");
+        check(kind(system(I, killTag + "X", killed)) == LogTrigger.NONE, "Kill tag suffixes cannot match");
+        check(kind(entry(3, APP, TIME, I, killTag, killed)) == LogTrigger.NONE, "An app writing a forged kill line is rejected");
+        check(kind(entry(0, 1000, TIME, I, killTag, killed)) == LogTrigger.NONE, "Kill line outside the system buffer is rejected");
+        byte[] kill = system(I, killTag, killed);
+        check(LogTrigger.candidate(kill, kill.length) == LogTrigger.GOOGLE_DIED, "Kill line is a diagnostic candidate");
+        LogTrigger.Gate killGate = new LogTrigger.Gate(TIME);
+        check(killGate.accept(LogTrigger.GOOGLE_DIED, TIME, TIME + 1) && !killGate.accept(LogTrigger.GOOGLE_DIED, TIME + 5, TIME + 6)
+            && killGate.accept(LogTrigger.POWER, TIME + 5, TIME + 6), "GOOGLE_DIED is debounced on its own, never blocking POWER");
+
         check(kind(system(W, AM, breeno(SYSTEM_UI, 0))) == LogTrigger.BAR, "Observed SystemUI failed Breeno start is BAR");
         check(kind(system(W, AM, breeno(1000, 0))) == LogTrigger.NONE, "The power-key tail with caller 1000 never triggers the bar");
         check(kind(system(I, AM, breeno(SYSTEM_UI, 0))) == LogTrigger.NONE, "Bar record must be a warning");

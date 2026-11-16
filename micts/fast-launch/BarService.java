@@ -36,6 +36,15 @@ public final class BarService extends AccessibilityService {
     /** Main thread only. One power rebind in flight; bumping powerRequest cancels it (screen off, power off, session change, destroy). */
     private boolean powerPending;
     private long powerRequest, powerAttempt;
+    /** Main thread only: last warm-up (elapsedRealtime) and a kill seen while the screen was off (warmed at screen on). */
+    private long lastWarm = -WARM_INTERVAL;
+    private boolean warmOnScreen;
+    /**
+     * After a kill, the next Gemini request reaches a cold :interactor and no window appears (device: 11/11 after clear all);
+     * a rebind ahead of time restarts it (3/3). ponytail: fixed 0.5 s delay and 3 s rate limit (bounds a kill loop to one
+     * 350 ms unbind per 3 s), tune on device.
+     */
+    private static final long WARM_DELAY = 500, WARM_INTERVAL = 3000;
     /** Newest attempt per pathway only (StatusPolicy records); main thread only. */
     static final String LAST_BAR = "last_bar", LAST_POWER = "last_power";
     private static final String POWER_INPUT = "전원 버튼 길게 누르기 (기기 로그)";
@@ -321,7 +330,27 @@ public final class BarService extends AccessibilityService {
             Log.i("PadLog", "trigger kind=" + kind + " instance=" + (instance == BarService.this));
             if (kind == LogTrigger.BAR) barGesture();
             else if (kind == LogTrigger.POWER) powerGesture();
+            else if (kind == LogTrigger.GOOGLE_DIED) googleDied();
         }
+    };
+
+    /** Google's :interactor was killed: restart it now (or at the next screen on) so the next power press is not cold. */
+    private void googleDied() {
+        if (!getSystemService(PowerManager.class).isInteractive()) { warmOnScreen = true; return; }
+        handler.removeCallbacks(warm);
+        handler.postDelayed(warm, WARM_DELAY); // Let the kill sweep (clear all) finish first.
+    }
+
+    private final Runnable warm = () -> {
+        warmOnScreen = false;
+        long now = SystemClock.elapsedRealtime();
+        if (instance != this || !power(this) || powerPending || now - lastWarm < WARM_INTERVAL
+            || !VoiceRepair.activationWanted(this, true)) { Log.i("PadVoice", "warm-up skipped"); return; }
+        lastWarm = now;
+        Context app = getApplicationContext();
+        try {
+            new Thread(() -> Log.i("PadVoice", "warm-up after Google kill restored=" + VoiceRepair.run(app)), "PadGoogleWarm").start();
+        } catch (RuntimeException | OutOfMemoryError unavailable) { Log.w("PadVoice", "warm-up thread unavailable"); }
     };
 
     /** First unlock after boot (or after the session was lost): at most AUTO_PROMPTS bridge windows per boot. */
@@ -344,6 +373,7 @@ public final class BarService extends AccessibilityService {
             // The log session stays open across screen changes; only the touch window and OEM gesture follow the screen.
             if (Intent.ACTION_SCREEN_OFF.equals(intent.getAction())) { cancelPending(); detach(); powerRequest++; }
             configure();
+            if (Intent.ACTION_SCREEN_ON.equals(intent.getAction()) && warmOnScreen) googleDied();
             if (Intent.ACTION_USER_PRESENT.equals(intent.getAction())) maybeAutoPrompt();
         }
     };
@@ -491,6 +521,7 @@ public final class BarService extends AccessibilityService {
     @Override public void onDestroy() {
         if (instance == this) instance = null;
         powerRequest++;
+        handler.removeCallbacks(warm);
         running = false;
         cancelPending();
         detach();

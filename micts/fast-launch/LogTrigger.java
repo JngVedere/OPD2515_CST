@@ -8,7 +8,8 @@ import java.util.regex.*;
  * a trigger kind, the writer UID and an entry time. Raw messages are never stored.
  */
 final class LogTrigger {
-    static final int NONE = 0, BAR = 1, POWER = 2;
+    /** GOOGLE_DIED: ColorOS reports the Google assistant interactor process killed (e.g. recents "clear all"). */
+    static final int NONE = 0, BAR = 1, POWER = 2, GOOGLE_DIED = 3;
     /** One SOCK_SEQPACKET connection to logd: system buffer only, starting from the newest entry. */
     static final String COMMAND = "stream lids=3 tail=1";
     static final int MAX_PACKET = 5120, SYSTEM_UID = 1000, SYSTEM_LOG = 3;
@@ -21,7 +22,11 @@ final class LogTrigger {
     private static final int HEADER = 28;
     private static final byte[] POWER_TAG = ascii("KEYLOG_SinglePowerKeyMonitor"), POWER_TEXT = ascii("PowerKey:onLongPress");
     private static final byte[] BAR_TAG = ascii("ActivityManager");
-    private static final int WARN = 5;
+    /** Observed OPD2515 (system_server, INFO): "process killed: {pkgName='<pkg>', serviceName='', procName=<proc>, pid=..." */
+    private static final byte[] KILL_TAG = ascii("UserAwareMgr");
+    private static final String KILL_PREFIX = "process killed: {pkgName='com.google.android.googlequicksearchbox', ",
+        KILL_PROC = ", procName=com.google.android.googlequicksearchbox:interactor, ";
+    private static final int INFO = 4, WARN = 5;
     private static final Pattern ORIGIN = Pattern.compile("\\s+mCallingUid=(\\d+)\\s+\\}\\s+U=(\\d+): not found\\s*$");
 
     private static byte[] ascii(String value) { return value.getBytes(StandardCharsets.US_ASCII); }
@@ -57,6 +62,10 @@ final class LogTrigger {
             return messageEnd >= after && same(p, message, after, POWER_TEXT)
                 && (after == messageEnd || p[after] == ',') ? POWER : NONE;
         }
+        if (same(p, tag, tagEnd, KILL_TAG)) {
+            if (p[hdr] != INFO || messageEnd - message > 4096) return NONE;
+            return googleDied(new String(p, message, messageEnd - message, StandardCharsets.UTF_8)) ? GOOGLE_DIED : NONE;
+        }
         if (p[hdr] != WARN || !same(p, tag, tagEnd, BAR_TAG)) return NONE;
         return bar(new String(p, message, messageEnd - message, StandardCharsets.UTF_8), systemUiUid, launcherUid, user) ? BAR : NONE;
     }
@@ -80,6 +89,13 @@ final class LogTrigger {
         } catch (NumberFormatException invalid) { return false; }
     }
 
+    /** Exactly the Google package's :interactor process (the small-Gemini session host), named once. */
+    static boolean googleDied(String message) {
+        return message != null && message.startsWith(KILL_PREFIX)
+            && message.indexOf(KILL_PROC) > 0 && message.indexOf(KILL_PROC) == message.lastIndexOf(KILL_PROC)
+            && message.indexOf("procName=") == message.lastIndexOf("procName=");
+    }
+
     private static int zero(byte[] p, int from, int end) {
         for (int i = from; i < end; i++) if (p[i] == 0) return i;
         return end;
@@ -94,19 +110,19 @@ final class LogTrigger {
     /** Gate outcomes, for structural diagnostics. */
     static final int ACCEPT = 0, NOT_TRIGGER = 1, BEFORE_SESSION = 2, FUTURE = 3, STALE = 4, DUPLICATE = 5;
     private static final String[] OUTCOMES = {"ACCEPT", "NOT_TRIGGER", "BEFORE_SESSION", "FUTURE", "STALE", "DUPLICATE"};
-    private static final String[] KINDS = {"NONE", "BAR", "POWER"};
+    private static final String[] KINDS = {"NONE", "BAR", "POWER", "GOOGLE_DIED"};
 
     /** Freshness, replay and duplicate-marker gate for one log session. Reader thread only. */
     static final class Gate {
         private final long watermark;
-        private final long[] last = new long[3];
-        private final boolean[] seen = new boolean[3];
+        private final long[] last = new long[4];
+        private final boolean[] seen = new boolean[4];
         Gate(long watermark) { this.watermark = watermark; }
 
         boolean accept(int kind, long entry, long now) { return check(kind, entry, now) == ACCEPT; }
 
         int check(int kind, long entry, long now) {
-            if (kind != BAR && kind != POWER) return NOT_TRIGGER;
+            if (kind != BAR && kind != POWER && kind != GOOGLE_DIED) return NOT_TRIGGER;
             if (entry < watermark) return BEFORE_SESSION;
             if (now < entry) return FUTURE;
             if (now - entry > MAX_AGE) return STALE;
@@ -130,6 +146,7 @@ final class LogTrigger {
         int message = tagEnd + 1, messageEnd = zero(p, message, end);
         if (same(p, tag, tagEnd, POWER_TAG)) return starts(p, message, messageEnd, POWER_PREFIX) ? POWER : NONE;
         if (same(p, tag, tagEnd, BAR_TAG)) return contains(p, message, messageEnd, BAR_ACTION) ? BAR : NONE;
+        if (same(p, tag, tagEnd, KILL_TAG)) return contains(p, message, messageEnd, INTERACTOR) ? GOOGLE_DIED : NONE;
         return NONE;
     }
 
@@ -141,7 +158,8 @@ final class LogTrigger {
             + " hdr=" + u16(p, 2) + " age=" + (now - entry) + "ms class=" + KINDS[kind] + " gate=" + OUTCOMES[outcome];
     }
 
-    private static final byte[] POWER_PREFIX = ascii("PowerKey:"), BAR_ACTION = ascii("ACTIVATE_SPEECH_ASSIST");
+    private static final byte[] POWER_PREFIX = ascii("PowerKey:"), BAR_ACTION = ascii("ACTIVATE_SPEECH_ASSIST"),
+        INTERACTOR = ascii("googlequicksearchbox:interactor");
 
     private static boolean starts(byte[] p, int from, int end, byte[] prefix) {
         return end - from >= prefix.length && same(p, from, from + prefix.length, prefix);
