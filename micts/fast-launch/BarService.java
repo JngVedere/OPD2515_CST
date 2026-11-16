@@ -5,6 +5,7 @@ import android.app.*;
 import android.accessibilityservice.AccessibilityService;
 import android.accessibilityservice.AccessibilityServiceInfo;
 import android.content.*;
+import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
 import android.content.res.Configuration;
 import android.graphics.PixelFormat;
@@ -32,8 +33,43 @@ public final class BarService extends AccessibilityService {
     private boolean moved, holdFired;
     private int attachAttempts;
     private LogSession logs;
+    /** Main thread only. One power rebind in flight; bumping powerRequest cancels it (screen off, power off, session change, destroy). */
+    private boolean powerPending;
+    private long powerRequest, powerAttempt;
+    /** Newest attempt per pathway only (StatusPolicy records); main thread only. */
+    static final String LAST_BAR = "last_bar", LAST_POWER = "last_power";
+    private static final String POWER_INPUT = "전원 버튼 길게 누르기 (기기 로그)";
 
     private static SharedPreferences prefs(Context context) { return context.getSharedPreferences("bar", MODE_PRIVATE); }
+
+    static long attemptBegin(Context context, String key, int outcome, String source, String detail) {
+        SharedPreferences bar = prefs(context);
+        String next = StatusPolicy.begin(bar.getString(key, null), System.currentTimeMillis(), outcome, source, detail);
+        bar.edit().putString(key, next).apply();
+        return StatusPolicy.id(next);
+    }
+
+    /** Ignored when stale: a newer attempt started or this one already has its result. */
+    static void attemptUpdate(Context context, String key, long id, int outcome, String detail) {
+        SharedPreferences bar = prefs(context);
+        String next = StatusPolicy.update(bar.getString(key, null), id, System.currentTimeMillis(), outcome, detail);
+        if (next != null) bar.edit().putString(key, next).apply();
+    }
+
+    /**
+     * StatusPolicy.GOOGLE_*: selection plus whether that Google service component is installed and enabled (the Google
+     * package is already in the manifest's queries). The live system binding is not observable here.
+     */
+    static int googleVoice(Context context) {
+        try {
+            String selected = Settings.Secure.getString(context.getContentResolver(), VoiceRepair.KEY);
+            if (!VoiceRepair.googleSelected(selected)) return StatusPolicy.GOOGLE_NONE;
+            ComponentName component = ComponentName.unflattenFromString(selected);
+            // Flags 0: a disabled component or package is reported as not found.
+            return component != null && context.getPackageManager().getServiceInfo(component, 0).isEnabled()
+                ? StatusPolicy.GOOGLE_READY : StatusPolicy.GOOGLE_UNAVAILABLE;
+        } catch (PackageManager.NameNotFoundException | RuntimeException unavailable) { return StatusPolicy.GOOGLE_UNAVAILABLE; }
+    }
 
     static boolean ready(Context context) {
         if (nativeMode(context)) return instance != null && enabled(context) && logState() == LogSession.ACTIVE
@@ -53,6 +89,20 @@ public final class BarService extends AccessibilityService {
     static boolean power(Context context) { return prefs(context).getBoolean(POWER, true); }
     static void setPower(Context context, boolean on) {
         prefs(context).edit().putBoolean(POWER, on).apply();
+        refreshConfiguration();
+    }
+
+    /**
+     * Sub-option of POWER, off by default: also request the assistant while the keyguard is locked (screen woken by the
+     * power key itself). Never unlocks, dismisses or weakens the keyguard. Not before the first unlock after boot: this
+     * service is not direct-boot aware and the log session needs the user's approval after unlock.
+     */
+    static final String POWER_LOCKED = "power_locked_assist";
+    static boolean lockedAssist(Context context) { return prefs(context).getBoolean(POWER_LOCKED, false); }
+    static void setLockedAssist(Context context, boolean on) {
+        prefs(context).edit().putBoolean(POWER_LOCKED, on).apply();
+        BarService service = instance;
+        if (service != null) service.powerRequest++; // Any change cancels a request made under the old policy.
         refreshConfiguration();
     }
 
@@ -137,11 +187,20 @@ public final class BarService extends AccessibilityService {
     }
 
     private final Runnable longPress = () -> {
-        if (holdFired || moved || target == null || nativeMode(this) || !maySearch()) return;
+        if (holdFired || moved || target == null || nativeMode(this)) return;
         holdFired = true;
+        if (!maySearch()) { attemptBegin(this, LAST_BAR, StatusPolicy.CANCELLED, barInput(), searchBlocked()); return; }
         target.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);
         launchSearch();
     };
+
+    private String barInput() { return nativeMode(this) ? "ColorOS 기본 바 길게 누르기 (기기 로그)" : "터치 영역 길게 누르기"; }
+
+    private String searchBlocked() {
+        if (!enabled(this)) return "사용 꺼짐";
+        if (!granted(this)) return "접근성 승인 해제됨";
+        return unlockedScreen() ? "기기 로그 연결 끊김" : "화면 꺼짐 또는 잠금 상태";
+    }
 
     private boolean unlockedScreen() {
         return getSystemService(PowerManager.class).isInteractive()
@@ -155,32 +214,94 @@ public final class BarService extends AccessibilityService {
         PowerManager power = getSystemService(PowerManager.class);
         return "enabled=" + enabled(this) + " native=" + nativeMode(this) + " power=" + power(this) + " granted=" + granted(this)
             + " interactive=" + power.isInteractive() + " locked=" + getSystemService(KeyguardManager.class).isKeyguardLocked()
-            + " session=" + logs.state();
+            + " lockedAssist=" + lockedAssist(this) + " session=" + logs.state();
+    }
+
+    /** One power policy for the press and the late finish gate (GeminiSession re-checks the same screen rule). */
+    private boolean powerAllowed(boolean lockedAllowed, long age) {
+        return LogTrigger.powerLaunch(power(this), granted(this), getSystemService(PowerManager.class).isInteractive(),
+            getSystemService(KeyguardManager.class).isKeyguardLocked(), lockedAllowed, logs.state() == LogSession.ACTIVE, age);
+    }
+
+    private String powerBlocked(boolean lockedAllowed, long age) {
+        return StatusPolicy.powerBlocked(power(this), granted(this), getSystemService(PowerManager.class).isInteractive(),
+            getSystemService(KeyguardManager.class).isKeyguardLocked(), lockedAllowed, logs.state() == LogSession.ACTIVE, age);
     }
 
     private void barGesture() {
         if (nativeMode(this) && maySearch() && logs.state() == LogSession.ACTIVE) launchSearch();
-        else Log.i("PadBar", "bar dispatch skipped " + dispatchState());
+        else {
+            Log.i("PadBar", "bar dispatch skipped " + dispatchState());
+            if (nativeMode(this) && enabled(this)) attemptBegin(this, LAST_BAR, StatusPolicy.CANCELLED, barInput(), searchBlocked());
+        }
     }
 
     private void powerGesture() {
-        if (!power(this) || !granted(this) || !unlockedScreen() || logs.state() != LogSession.ACTIVE) {
+        // Snapshot at the press: switching the option on later never widens this request to a locked screen.
+        boolean lockedAllowed = lockedAssist(this);
+        if (!powerAllowed(lockedAllowed, 0)) {
             Log.i("PadPower", "power dispatch skipped " + dispatchState());
+            if (power(this)) attemptBegin(this, LAST_POWER, StatusPolicy.CANCELLED, POWER_INPUT, powerBlocked(lockedAllowed, 0));
             return;
         }
-        Log.i("PadPower", "power dispatch -> GeminiSession.launch");
-        boolean started = GeminiSession.launch(this);
+        // The in-flight attempt keeps its record; this duplicate press is only logged.
+        if (powerPending) { Log.i("PadPower", "power dispatch skipped rebind-pending"); return; }
+        // Every accepted press rebinds the selected Google service first (it can go unresponsive after long idle).
+        powerPending = true;
+        long request = ++powerRequest, since = SystemClock.elapsedRealtime();
+        powerAttempt = attemptBegin(this, LAST_POWER, StatusPolicy.PENDING, POWER_INPUT, "입력 인식 · Google 음성 연결 다시 시작 중");
+        Context app = getApplicationContext();
+        Log.i("PadPower", "power dispatch -> rebind request=" + request);
+        try {
+            new Thread(() -> {
+                int rebind;
+                try { rebind = VoiceRepair.prepare(app); }
+                catch (RuntimeException unexpected) { rebind = VoiceRepair.ERROR; }
+                int result = rebind;
+                handler.post(() -> finishPower(request, since, result, lockedAllowed));
+            }, "PadPowerRebind").start();
+        } catch (RuntimeException | OutOfMemoryError unavailable) {
+            powerPending = false;
+            Log.w("PadPower", "rebind thread unavailable: " + unavailable.getClass().getSimpleName());
+            attemptUpdate(this, LAST_POWER, powerAttempt, StatusPolicy.FAILED,
+                "Google 재연결 작업을 시작하지 못함 (" + unavailable.getClass().getSimpleName() + ")");
+        }
+    }
+
+    /** Runs after the exact selection is restored and settled; drops the request if anything changed meanwhile. */
+    private void finishPower(long request, long since, int rebind, boolean lockedSnapshot) {
+        powerPending = false;
+        long age = SystemClock.elapsedRealtime() - since;
+        String rebound = VoiceRepair.describe(rebind);
+        boolean lockedAllowed = lockedSnapshot && lockedAssist(this);
+        if (instance != this || request != powerRequest || !powerAllowed(lockedAllowed, age)) {
+            Log.i("PadPower", "power launch dropped request=" + request + " age=" + age + "ms current=" + (request == powerRequest)
+                + " instance=" + (instance == this) + " " + dispatchState());
+            String reason = instance != this ? "접근성 서비스 종료" : powerBlocked(lockedAllowed, age);
+            attemptUpdate(this, LAST_POWER, powerAttempt, StatusPolicy.CANCELLED, rebound + " · Gemini 요청 취소: "
+                + (reason != null ? reason : "화면 꺼짐·옵션 변경·기기 로그 세션 변경"));
+            return;
+        }
+        Log.i("PadPower", "rebind outcome=" + rebind + " age=" + age + "ms -> GeminiSession.launch");
+        boolean started = VoiceRepair.ready(rebind) && GeminiSession.launch(this, lockedAllowed);
         // true = the system accepted the session request; it does not prove an assistant window appeared.
         Log.i("PadPower", "GeminiSession.launch returned " + started + " (request acceptance, window unverified)");
+        if (started) attemptUpdate(this, LAST_POWER, powerAttempt, StatusPolicy.ACCEPTED,
+            rebound + " · 시스템이 Gemini 세션 요청을 수락함 · 작은 Gemini 창 표시는 확인하지 않음");
+        else attemptUpdate(this, LAST_POWER, powerAttempt, StatusPolicy.FAILED, rebound + " · " + (!VoiceRepair.ready(rebind)
+            ? "Gemini 요청 안 함" : googleVoice(this) == StatusPolicy.GOOGLE_READY ? "시스템이 Gemini 세션 요청을 수락하지 않음"
+            : "Google 음성 서비스 미선택 또는 사용 불가"));
         if (!started) android.widget.Toast.makeText(this, "작은 Gemini를 열지 못했습니다.", android.widget.Toast.LENGTH_SHORT).show();
     }
 
     private void launchSearch() {
+        long attempt = attemptBegin(this, LAST_BAR, StatusPolicy.PENDING, barInput(), "입력 인식 · 실행 화면 시작 요청");
         try {
-            startActivity(new Intent(this, MainActivity.class)
+            startActivity(new Intent(this, MainActivity.class).putExtra(MainActivity.ATTEMPT, attempt)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_NO_ANIMATION));
         } catch (RuntimeException error) {
             Log.e("PadBar", "Search launch failed", error);
+            attemptUpdate(this, LAST_BAR, attempt, StatusPolicy.FAILED, "실행 화면을 시작하지 못함 (" + error.getClass().getSimpleName() + ")");
         }
     }
 
@@ -192,6 +313,7 @@ public final class BarService extends AccessibilityService {
 
     private final LogSession.Listener logEvents = new LogSession.Listener() {
         @Override public void stateChanged(boolean declined) {
+            powerRequest++; // A session change cancels a power request from the old session.
             if (declined) prefs(BarService.this).edit().putBoolean(LOG_DECLINED, true).apply();
             notifyState();
         }
@@ -220,7 +342,7 @@ public final class BarService extends AccessibilityService {
     private final BroadcastReceiver screen = new BroadcastReceiver() {
         @Override public void onReceive(Context context, Intent intent) {
             // The log session stays open across screen changes; only the touch window and OEM gesture follow the screen.
-            if (Intent.ACTION_SCREEN_OFF.equals(intent.getAction())) { cancelPending(); detach(); }
+            if (Intent.ACTION_SCREEN_OFF.equals(intent.getAction())) { cancelPending(); detach(); powerRequest++; }
             configure();
             if (Intent.ACTION_USER_PRESENT.equals(intent.getAction())) maybeAutoPrompt();
         }
@@ -233,8 +355,15 @@ public final class BarService extends AccessibilityService {
         int systemUi;
         try { systemUi = getPackageManager().getApplicationInfo("com.android.systemui", 0).uid; }
         catch (PackageManager.NameNotFoundException missing) { systemUi = -1; } // Bar events then never match.
+        // With the taskbar on, the bar hold is reported by the launcher. Only this exact package counts, and only when it is
+        // a preinstalled (or updated preinstalled) enabled app: never the current HOME or any other app. -1 never matches.
+        int launcher = -1;
+        try {
+            ApplicationInfo home = getPackageManager().getApplicationInfo("com.android.launcher", 0);
+            if (home.enabled && (home.flags & (ApplicationInfo.FLAG_SYSTEM | ApplicationInfo.FLAG_UPDATED_SYSTEM_APP)) != 0) launcher = home.uid;
+        } catch (PackageManager.NameNotFoundException missing) { }
         int uid = getApplicationInfo().uid;
-        logs = new LogSession(handler, logEvents, systemUi, uid / 100000);
+        logs = new LogSession(handler, logEvents, systemUi, launcher, uid / 100000);
         IntentFilter filter = new IntentFilter(Intent.ACTION_SCREEN_OFF);
         filter.addAction(Intent.ACTION_SCREEN_ON);
         filter.addAction(Intent.ACTION_USER_PRESENT);
@@ -264,6 +393,7 @@ public final class BarService extends AccessibilityService {
         running = enabled(this);
         handler.removeCallbacks(restoreTarget);
         handler.removeCallbacks(longPress);
+        if (!power(this)) powerRequest++; // Power option off: no delayed Gemini request survives.
         if (!logsWanted(this) || !logsPermitted(this)) logs.close();
         if (!enabled(this)) detach();
         else if (nativeMode(this)) {
@@ -307,7 +437,7 @@ public final class BarService extends AccessibilityService {
                     moved = false; holdFired = false;
                     downX = event.getRawX(); downY = event.getRawY();
                     handler.removeCallbacks(longPress);
-                    handler.postDelayed(longPress, 400);
+                    handler.postDelayed(longPress, BarGesture.HOLD_MS);
                     break;
                 case MotionEvent.ACTION_MOVE:
                     if (Math.hypot(event.getRawX() - downX, event.getRawY() - downY) > slop) {
@@ -360,6 +490,7 @@ public final class BarService extends AccessibilityService {
 
     @Override public void onDestroy() {
         if (instance == this) instance = null;
+        powerRequest++;
         running = false;
         cancelPending();
         detach();

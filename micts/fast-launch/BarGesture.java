@@ -7,6 +7,7 @@ import android.util.Log;
 
 /** Avoids the OEM bar shortcut competing with the app's own touch area. */
 final class BarGesture {
+    static final int HOLD_MS = 350;
     static final String GESTURE_KEY = "oplus_gesture_handle_cui_enable";
     // Keep 2.6's recovery keys so upgrades retain the original system value.
     static final String ORIGINAL = "gesture_original";
@@ -53,6 +54,6 @@ final class BarGesture {
     }
 
     static boolean releaseShouldTrigger(long heldMillis, boolean moved, boolean alreadyFired) {
-        return heldMillis >= 400 && !moved && !alreadyFired;
+        return heldMillis >= HOLD_MS && !moved && !alreadyFired;
     }
 }

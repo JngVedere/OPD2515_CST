@@ -28,14 +28,14 @@ final class LogSession {
 
     private final Handler handler;
     private final Listener listener;
-    private final int systemUiUid, user;
+    private final int systemUiUid, launcherUid, user;
     private LocalSocket socket;
     private int state = OFF;
     private long generation;
 
-    LogSession(Handler handler, Listener listener, int systemUiUid, int user) {
+    LogSession(Handler handler, Listener listener, int systemUiUid, int launcherUid, int user) {
         this.handler = handler; this.listener = listener;
-        this.systemUiUid = systemUiUid; this.user = user;
+        this.systemUiUid = systemUiUid; this.launcherUid = launcherUid; this.user = user;
     }
 
     synchronized int state() { return state; }
@@ -87,7 +87,7 @@ final class LogSession {
                     Log.w(TAG, "coalesced read session=" + session + " bytes=" + count + " extra=" + LogTrigger.trailing(packet, count));
                 }
                 int candidate = LogTrigger.candidate(packet, count);
-                int kind = trusted ? LogTrigger.classify(packet, count, systemUiUid, user) : LogTrigger.NONE;
+                int kind = trusted ? LogTrigger.classify(packet, count, systemUiUid, launcherUid, user) : LogTrigger.NONE;
                 long now = System.currentTimeMillis();
                 int outcome = kind == LogTrigger.NONE ? LogTrigger.NOT_TRIGGER : gate.check(kind, LogTrigger.millis(packet), now);
                 if ((candidate != LogTrigger.NONE || kind != LogTrigger.NONE) && diagnostics < MAX_DIAGNOSTICS) {

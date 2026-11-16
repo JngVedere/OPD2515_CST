@@ -23,15 +23,21 @@ final class GeminiSession {
     private static final String GOOGLE_PROVIDER = GOOGLE + ".GsaPublicContentProvider";
     // VoiceInteractionSession: SHOW_WITH_ASSIST | SHOW_WITH_SCREENSHOT | SHOW_SOURCE_ASSIST_GESTURE.
     private static final int FLAGS = 7;
+    /**
+     * Locked keyguard: SHOW_SOURCE_ASSIST_GESTURE only. AOSP VoiceInteractionSessionConnection.showLocked requests
+     * assist structure/screenshot (and foreground activity names) only for flags 1/2, so none are sent. What the
+     * session shows over the lock screen is Google's own policy; this app never dismisses or bypasses the keyguard.
+     */
+    static final int LOCKED_FLAGS = 4;
 
     private GeminiSession() {}
 
-    static boolean launch(Context context) {
+    /** Final gate: same screen rule as BarService (LogTrigger.powerScreen); lockedAllowed = option snapshot && current. */
+    static boolean launch(Context context, boolean lockedAllowed) {
         PowerManager power = context.getSystemService(PowerManager.class);
         KeyguardManager keyguard = context.getSystemService(KeyguardManager.class);
-        if (power == null || !power.isInteractive() || keyguard == null || keyguard.isKeyguardLocked()) {
-            return false;
-        }
+        if (power == null || keyguard == null
+                || !LogTrigger.powerScreen(power.isInteractive(), keyguard.isKeyguardLocked(), lockedAllowed)) return false;
         String selected = Settings.Secure.getString(context.getContentResolver(), "voice_interaction_service");
         ComponentName component = selected == null ? null : ComponentName.unflattenFromString(selected);
         if (component == null || !GOOGLE.equals(component.getPackageName())) {
@@ -49,12 +55,16 @@ final class GeminiSession {
             Class<?> managerType = Class.forName("com.android.internal.app.IVoiceInteractionManagerService");
             Bundle args = new Bundle();
             args.putLong("invocation_time_ms", SystemClock.elapsedRealtime());
+            // Screen state read last, right before the request, so the flags match the state that was checked.
+            boolean locked = keyguard.isKeyguardLocked();
+            if (!LogTrigger.powerScreen(power.isInteractive(), locked, lockedAllowed)) return false;
+            int flags = locked ? LOCKED_FLAGS : FLAGS;
             // No CTS-specific arguments: Google handles the ordinary selected assistant session.
             Object result = Build.VERSION.SDK_INT >= 34
-                ? HiddenApiBypass.invoke(managerType, manager, "showSessionFromSession", null, args, FLAGS, null)
-                : HiddenApiBypass.invoke(managerType, manager, "showSessionFromSession", null, args, FLAGS);
+                ? HiddenApiBypass.invoke(managerType, manager, "showSessionFromSession", null, args, flags, null)
+                : HiddenApiBypass.invoke(managerType, manager, "showSessionFromSession", null, args, flags);
             boolean accepted = Boolean.TRUE.equals(result);
-            Log.i(TAG, "Assistant request accepted=" + accepted);
+            Log.i(TAG, "Assistant request accepted=" + accepted + " locked=" + locked + " flags=" + flags);
             return accepted;
         } catch (ReflectiveOperationException | RuntimeException | LinkageError error) {
             // Do not log bundles, provider data, screenshots or text from the current app.

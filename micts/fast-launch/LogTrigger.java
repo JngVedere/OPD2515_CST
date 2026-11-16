@@ -47,7 +47,7 @@ final class LogTrigger {
     static long millis(byte[] p) { return (i32(p, 12) & 0xffffffffL) * 1000 + (i32(p, 16) & 0xffffffffL) / 1_000_000; }
 
     /** Trusted classification: system_server writer, system buffer, exact tag and message shape. */
-    static int classify(byte[] p, int n, int systemUiUid, int user) {
+    static int classify(byte[] p, int n, int systemUiUid, int launcherUid, int user) {
         if (!valid(p, n) || i32(p, 24) != SYSTEM_UID || i32(p, 20) != SYSTEM_LOG) return NONE;
         int hdr = u16(p, 2), end = hdr + u16(p, 0), tag = hdr + 1, tagEnd = zero(p, tag, end);
         if (tagEnd >= end) return NONE;
@@ -58,12 +58,15 @@ final class LogTrigger {
                 && (after == messageEnd || p[after] == ',') ? POWER : NONE;
         }
         if (p[hdr] != WARN || !same(p, tag, tagEnd, BAR_TAG)) return NONE;
-        return bar(new String(p, message, messageEnd - message, StandardCharsets.UTF_8), systemUiUid, user) ? BAR : NONE;
+        return bar(new String(p, message, messageEnd - message, StandardCharsets.UTF_8), systemUiUid, launcherUid, user) ? BAR : NONE;
     }
 
-    /** ColorOS bar hold: the disabled Breeno service start requested by SystemUI (power uses caller 1000). */
-    static boolean bar(String message, int systemUiUid, int user) {
-        if (message == null || message.length() > 4096 || systemUiUid <= SYSTEM_UID || user < 0) return false;
+    /**
+     * ColorOS bar hold: the disabled Breeno service start requested by SystemUI, or by the verified system launcher when
+     * its taskbar draws the bar (power uses caller 1000). Each UID is resolved by the caller; -1 (unresolved) never matches.
+     */
+    static boolean bar(String message, int systemUiUid, int launcherUid, int user) {
+        if (message == null || message.length() > 4096 || user < 0) return false;
         if (!message.startsWith("Unable to start service Intent { ")
             || !message.contains("act=heytap.intent.action.ACTIVATE_SPEECH_ASSIST ")
             || !message.contains("cmp=com.heytap.speechassist/.core.SpeechService ")) return false;
@@ -71,7 +74,9 @@ final class LogTrigger {
             || message.indexOf(" U=") != message.lastIndexOf(" U=")) return false;
         Matcher origin = ORIGIN.matcher(message);
         try {
-            return origin.find() && Integer.parseInt(origin.group(1)) == systemUiUid && Integer.parseInt(origin.group(2)) == user;
+            if (!origin.find() || Integer.parseInt(origin.group(2)) != user) return false;
+            int caller = Integer.parseInt(origin.group(1));
+            return caller > SYSTEM_UID && (caller == systemUiUid || caller == launcherUid);
         } catch (NumberFormatException invalid) { return false; }
     }
 
@@ -151,5 +156,23 @@ final class LogTrigger {
     static boolean autoPrompt(boolean wanted, boolean permission, boolean live, boolean bridgeShowing,
             boolean interactive, boolean locked, boolean declined, int attempts) {
         return wanted && permission && !live && !bridgeShowing && interactive && !locked && !declined && attempts < AUTO_PROMPTS;
+    }
+
+    /** Accepted power press to delayed Gemini request: covers the rebind (350 ms), settle (500 ms) and scheduling slack. */
+    static final long POWER_LAUNCH_AGE = 3000;
+
+    /**
+     * Screen rule shared by every power gate (press, late finish, final GeminiSession check): the display must be
+     * interactive (this app never wakes it; on screen off only the power key's own wake qualifies), and a locked
+     * keyguard is allowed only when lockedAllowed = locked-screen option at the press AND still on now.
+     */
+    static boolean powerScreen(boolean interactive, boolean locked, boolean lockedAllowed) {
+        return interactive && (!locked || lockedAllowed);
+    }
+
+    /** Power gate at the press (age 0) and again before the delayed Gemini request (elapsed-realtime age since the press). */
+    static boolean powerLaunch(boolean power, boolean granted, boolean interactive, boolean locked, boolean lockedAllowed,
+            boolean active, long age) {
+        return power && granted && powerScreen(interactive, locked, lockedAllowed) && active && age >= 0 && age <= POWER_LAUNCH_AGE;
     }
 }

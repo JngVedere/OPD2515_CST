@@ -32,8 +32,8 @@ public final class RecoveryHarness {
             check(BootRecovery.shouldRecover((bits & 1) != 0, (bits & 2) != 0,
                 (bits & 4) != 0, (bits & 8) != 0, (bits & 16) != 0, (bits & 32) != 0) == (bits == 63));
         }
-        check(BarGesture.releaseShouldTrigger(400, false, false));
-        check(!BarGesture.releaseShouldTrigger(399, false, false));
+        check(BarGesture.releaseShouldTrigger(350, false, false));
+        check(!BarGesture.releaseShouldTrigger(349, false, false));
         check(!BarGesture.releaseShouldTrigger(1000, true, false));
         check(!BarGesture.releaseShouldTrigger(1000, false, true));
         System.out.println("PASS: " + checks + " Android recovery checks; actual app policy and service-list code, no device used.");
@@ -499,6 +499,48 @@ public final class StateHarness {
         try { running.join(); } catch (InterruptedException interrupted) { throw new AssertionError(interrupted); }
         check(first[0] && !VoiceRepair.busy() && google.equals(shared.secure.get(VoiceRepair.KEY)) && shared.writes==2,"Repeated request caused exactly one clear and one restore");
         check(VoiceRepair.run(shared) && shared.writes==4,"A later explicit request runs again");
+
+        // Power long press: rebind -> exact restore -> settle, and only then may BarService request Gemini.
+        Context press = new Context();
+        press.secure.put(VoiceRepair.KEY,google);
+        java.util.List<String> order = new java.util.ArrayList<>();
+        press.beforeWrite = () -> order.add(press.secure.get(VoiceRepair.KEY) == null ? "restore" : "clear");
+        long started = System.nanoTime();
+        boolean ready = VoiceRepair.prepare(press) == VoiceRepair.REBOUND;
+        long took = (System.nanoTime() - started) / 1_000_000;
+        order.add("gemini");
+        check(ready && order.equals(java.util.List.of("clear","restore","gemini")) && google.equals(press.secure.get(VoiceRepair.KEY))
+            && !bar(press).contains(VoiceRepair.PENDING) && took >= VoiceRepair.UNBOUND_MS + VoiceRepair.SETTLE_MS,"Power press: rebind, exact restore and settle all finish before Gemini");
+        check(VoiceRepair.prepare(press) == VoiceRepair.REBOUND && press.writes==4 && google.equals(press.secure.get(VoiceRepair.KEY)),"A second accepted power press rebinds again");
+        press.beforeWrite = () -> { if (press.writes==6) press.failStringWrites = 1; };
+        check(VoiceRepair.prepare(press) == VoiceRepair.NOT_RESTORED && press.secure.get(VoiceRepair.KEY)==null && google.equals(bar(press).getString(VoiceRepair.PENDING,null))
+            && !VoiceRepair.busy(),"Failed restore: no Gemini, exact journal kept, not left busy");
+        press.beforeWrite = null;
+        press.permission = -1;
+        int beforeRetry = press.writes;
+        check(VoiceRepair.prepare(press) == VoiceRepair.RESTORE_PENDING && press.writes==beforeRetry && press.secure.get(VoiceRepair.KEY)==null
+            && google.equals(bar(press).getString(VoiceRepair.PENDING,null)) && !VoiceRepair.busy(),"Journal restore failing again (WSS revoked): fail closed, journal kept, no extra clear");
+        press.permission = 0;
+        check(VoiceRepair.prepare(press) == VoiceRepair.REBOUND && google.equals(press.secure.get(VoiceRepair.KEY)) && !bar(press).contains(VoiceRepair.PENDING),"Next press restores the journaled Google value first, then rebinds");
+        Context plain = new Context();
+        plain.secure.put(VoiceRepair.KEY,google);
+        plain.permission = -1;
+        check(VoiceRepair.prepare(plain) == VoiceRepair.NO_WSS && plain.writes==0,"Without WSS the press goes straight to Gemini, no writes");
+        plain.permission = 0;
+        plain.secure.put(VoiceRepair.KEY,other);
+        check(VoiceRepair.prepare(plain) == VoiceRepair.NOT_GOOGLE && plain.writes==0 && other.equals(plain.secure.get(VoiceRepair.KEY)),"Another selected assistant is never touched by a power press");
+        Context manual = new Context();
+        manual.secure.put(VoiceRepair.KEY,google);
+        Thread repair = new Thread(() -> VoiceRepair.run(manual));
+        repair.start();
+        until = System.currentTimeMillis() + 2000;
+        while (manual.secure.get(VoiceRepair.KEY) != null && System.currentTimeMillis() < until) Thread.onSpinWait();
+        check(VoiceRepair.busy() && VoiceRepair.prepare(manual) == VoiceRepair.BUSY,"A press during a running rebind is dropped, not queued");
+        try { repair.join(); } catch (InterruptedException interrupted) { throw new AssertionError(interrupted); }
+        check(!VoiceRepair.busy() && manual.writes==2 && google.equals(manual.secure.get(VoiceRepair.KEY)),"The running rebind still restores once and releases busy");
+        // Only positive outcomes may go on to Gemini (the former true results); every refusal stays closed.
+        for (int outcome : new int[]{VoiceRepair.REBOUND,VoiceRepair.NO_WSS,VoiceRepair.NOT_GOOGLE}) check(VoiceRepair.ready(outcome),"Rebind outcome "+outcome+" may request Gemini");
+        for (int outcome : new int[]{VoiceRepair.BUSY,VoiceRepair.RESTORE_PENDING,VoiceRepair.NOT_RESTORED,VoiceRepair.INTERRUPTED,VoiceRepair.ERROR}) check(!VoiceRepair.ready(outcome) && !VoiceRepair.describe(outcome).isEmpty(),"Rebind outcome "+outcome+" never requests Gemini");
         System.out.println("PASS: " + checks + " stateful Android settings checks; actual recovery and gesture classes, no device used.");
     }
 }
@@ -569,7 +611,7 @@ if ($allSources['LogSession.java'] -match 'FileOutputStream|openFileOutput|getSh
     throw 'Log session must not persist or re-log raw log content'
 }
 $securityChecks++
-if ($allSources['BarService.java'] -notmatch 'GeminiSession\.launch\(this\)') { throw 'Power trigger must dispatch to GeminiSession.launch' }
+if ($allSources['BarService.java'] -notmatch 'GeminiSession\.launch\(this, lockedAllowed\)') { throw 'Power trigger must dispatch to GeminiSession.launch' }
 $securityChecks++
 if ($allSources['LogSession.java'] -notmatch '(?s)handler\.post\(\(\) -> \{\s*if \(!current\(session\)\) return;\s*long delivered = System\.currentTimeMillis\(\);\s*if \(LogTrigger\.deliverable\(entry, delivered\)\) listener\.trigger\(kind\);') {
     throw 'Queued triggers must recheck session and freshness on the main thread before dispatch'
@@ -583,24 +625,79 @@ if ($allSources['LogSession.java'] -notmatch 'diagnostics < MAX_DIAGNOSTICS' -or
     throw 'Log diagnostics must stay bounded and structural'
 }
 $securityChecks++
-$repairUsers = @($allSources.Keys | Where-Object { $_ -ne 'VoiceRepair.java' -and $allSources[$_] -match 'VoiceRepair\.(run|begin)\(' } | Sort-Object)
-if (($repairUsers -join ',') -cne 'SetupActivity.java') { throw 'Google voice rebind must only start from the explicit settings button' }
+$service = $allSources['BarService.java']
+$method = '(?:(?!\r?\n    (?:private|static|@Override)).)*' # stays inside one method body
+$repairUsers = @($allSources.Keys | Where-Object { $_ -ne 'VoiceRepair.java' -and $allSources[$_] -match 'VoiceRepair\.(run|begin|prepare)\(' } | Sort-Object)
+if (($repairUsers -join ',') -cne 'BarService.java,SetupActivity.java' -or
+    ([regex]::Matches($service, 'VoiceRepair\.(run|begin|prepare)\(')).Count -ne 1 -or
+    $service -notmatch ('(?s)private void powerGesture\(\) \{' + $method + 'VoiceRepair\.prepare\(app\)') -or
+    ([regex]::Matches($allSources['SetupActivity.java'], 'VoiceRepair\.(run|begin|prepare)\(')).Count -ne 1 -or
+    $allSources['SetupActivity.java'] -notmatch ('(?s)private void repairVoice\(\) \{' + $method + 'VoiceRepair\.run\(app\)')) {
+    throw 'Google voice rebind runs only per accepted power press and from the explicit repair button (never BAR/touch CTS)'
+}
 $securityChecks++
-if ($allSources['BarService.java'] -notmatch 'VoiceRepair\.recover\(this\)') { throw 'Service start must finish an interrupted voice rebind' }
+if ($service -notmatch 'VoiceRepair\.recover\(this\)') { throw 'Service start must finish an interrupted voice rebind' }
 $securityChecks++
-if ($allSources['SetupActivity.java'] -notmatch 'approveIfNeeded\(\); repairVoice\(false\); status' -or
-    $allSources['SetupActivity.java'] -notmatch 'if \(checked\) \{ approveIfNeeded\(\); repairVoice\(false\); \}' -or
-    ([regex]::Matches($allSources['SetupActivity.java'], 'repairVoice\(false\)')).Count -ne 2) {
-    throw 'Voice rebind runs once on explicit Start and power-enable only'
+# Order: worker rebinds, then posts; the main thread rechecks the request and only then asks for Gemini.
+if ([regex]::Matches($service, 'GeminiSession\.launch\(').Count -ne 1 -or
+    $service -notmatch '(?s)rebind = VoiceRepair\.prepare\(app\);.{0,200}handler\.post\(\(\) -> finishPower\(request, since, result, lockedAllowed\)\)' -or
+    $service -notmatch ('(?s)private void finishPower\(long request, long since, int rebind, boolean lockedSnapshot\) \{\s*powerPending = false;' + $method +
+        'boolean lockedAllowed = lockedSnapshot && lockedAssist\(this\);\s*if \(instance != this \|\| request != powerRequest \|\| !powerAllowed\(lockedAllowed, age\)\)' + $method +
+        'boolean started = VoiceRepair\.ready\(rebind\) && GeminiSession\.launch\(this, lockedAllowed\);') -or
+    $service -notmatch ('(?s)private void powerGesture\(\) \{' + $method + 'if \(powerPending\) \{' + $method + 'powerPending = true;') -or
+    $service -notmatch ('(?s)private void powerGesture\(\) \{\s*(?://[^\n]*\s*)?boolean lockedAllowed = lockedAssist\(this\);\s*if \(!powerAllowed\(lockedAllowed, 0\)\) \{')) {
+    throw 'Gemini may be requested only after the rebind finished and the request was rechecked'
+}
+$securityChecks++
+# One screen policy for press, late finish and GeminiSession: LogTrigger.powerLaunch/powerScreen; locked requests are gesture-only (no assist data/screenshot).
+$gemini = $allSources['GeminiSession.java']
+if ($service -notmatch '(?s)private boolean powerAllowed\(boolean lockedAllowed, long age\) \{\s*return LogTrigger\.powerLaunch\(power\(this\), granted\(this\), getSystemService\(PowerManager\.class\)\.isInteractive\(\),\s*getSystemService\(KeyguardManager\.class\)\.isKeyguardLocked\(\), lockedAllowed, logs\.state\(\) == LogSession\.ACTIVE, age\);' -or
+    ([regex]::Matches($service, 'LogTrigger\.powerLaunch\(')).Count -ne 1 -or
+    $service -match '(?s)private void (?:powerGesture|finishPower)\([^)]*\) \{(?:(?!\r?\n    (?:private|static|@Override)).)*unlockedScreen\(' -or
+    $gemini -notmatch 'private static final int FLAGS = 7;' -or $gemini -notmatch 'static final int LOCKED_FLAGS = 4;' -or
+    $gemini -notmatch '(?s)boolean locked = keyguard\.isKeyguardLocked\(\);\s*if \(!LogTrigger\.powerScreen\(power\.isInteractive\(\), locked, lockedAllowed\)\) return false;\s*int flags = locked \? LOCKED_FLAGS : FLAGS;' -or
+    ([regex]::Matches($gemini, 'showSessionFromSession", null, args, flags')).Count -ne 2 -or ([regex]::Matches($gemini, ', FLAGS[,)]')).Count -ne 0 -or
+    ([regex]::Matches($gemini, 'LogTrigger\.powerScreen\(')).Count -ne 2 -or
+    ($allSources.Values -join "`n") -match 'requestDismissKeyguard|disableKeyguard|newKeyguardLock|FLAG_DISMISS_KEYGUARD|FLAG_SHOW_WHEN_LOCKED|setShowWhenLocked|setTurnScreenOn|FLAG_TURN_SCREEN_ON|ACQUIRE_CAUSES_WAKEUP|newWakeLock|wakeUp\(|launchVoiceAssistFromKeyguard|LOCK_SCREEN|lockscreen') {
+    throw 'Locked-screen assistant: one shared gate, gesture-only flags while locked, no keyguard dismissal, wake or lock-setting changes'
+}
+$securityChecks++
+# The bottom trigger (CTS / chosen app) stays unlocked-only regardless of the locked-screen option.
+if ($service -notmatch 'private boolean maySearch\(\) \{ return enabled\(this\) && granted\(this\) && unlockedScreen\(\); \}' -or
+    $service -match ('(?s)private (?:void|boolean|String) (?:barGesture|launchSearch|maySearch|searchBlocked|attach)\([^)]*\) \{' + $method + 'lockedAssist') -or
+    $allSources['MainActivity.java'] -match 'lockedAssist|POWER_LOCKED') {
+    throw 'CTS and chosen-app launches must stay blocked while locked'
+}
+$securityChecks++
+# Cancellation: screen off, power option off, log-session change and service destruction all invalidate a pending request.
+if ($service -notmatch 'ACTION_SCREEN_OFF\.equals\(intent\.getAction\(\)\)\) \{[^}]*powerRequest\+\+;' -or
+    $service -notmatch 'if \(!power\(this\)\) powerRequest\+\+;' -or
+    $service -notmatch 'stateChanged\(boolean declined\) \{\s*powerRequest\+\+;' -or
+    $service -notmatch 'onDestroy\(\) \{\s*if \(instance == this\) instance = null;\s*powerRequest\+\+;' -or
+    $service -notmatch '(?s)static void setLockedAssist\(Context context, boolean on\) \{\s*prefs\(context\)\.edit\(\)\.putBoolean\(POWER_LOCKED, on\)\.apply\(\);\s*BarService service = instance;\s*if \(service != null\) service\.powerRequest\+\+;' -or
+    $service -notmatch 'boolean lockedAssist\(Context context\) \{ return prefs\(context\)\.getBoolean\(POWER_LOCKED, false\); \}' -or
+    $service -match ('(?s)private void (?:barGesture|launchSearch)\(\) \{' + $method + '(?:powerRequest|powerPending|VoiceRepair)')) {
+    throw 'Pending power requests must be cancelled on lock/off/session change/destroy, without touching BAR/touch CTS'
+}
+$securityChecks++
+# Start and the power switch never rebind or toast about Google; only the explicit repair button gives feedback.
+$setup = $allSources['SetupActivity.java']
+$begin = [regex]::Match($setup, '(?s)private void begin\(\) \{(.*?)\r?\n    \}').Groups[1].Value
+$powerToggle = [regex]::Match($setup, '(?s)powerSwitch = toggle\((.*?)\r?\n        \}\);').Groups[1].Value
+if (-not $begin -or -not $powerToggle -or ($begin + $powerToggle) -match 'repairVoice|VoiceRepair|Toast|Google' -or
+    $setup -match 'repairVoice\((?:true|false)\)' -or ([regex]::Matches($setup, 'repairVoice\b')).Count -ne 2 -or
+    $setup -notmatch 'button\("Google 음성 연결 다시 시작", this::repairVoice\);') {
+    throw 'Start and enabling the power option must stay silent about Google; repair feedback only from its button'
 }
 $securityChecks++
 # Programmatic sync (onResume/refresh) must never act as a user change: no repair, mode, power or boot-option setter.
 $settingsSource = $allSources['SetupActivity.java']
 $unguarded = [regex]::Replace($settingsSource, '(?s)syncing = true;\s*try \{.*?\} finally \{ syncing = false; \}', '')
 $unguarded = $unguarded.Replace('modeGroup.check(BarService.nativeMode(this) ? colorId : touchId);', '') # initial state, before the listener exists
-if ($unguarded -match 'powerSwitch\.setChecked\(|bootSwitch\.setChecked\(|modeGroup\.check\(' -or
+if ($unguarded -match 'powerSwitch\.setChecked\(|lockedSwitch\.setChecked\(|bootSwitch\.setChecked\(|modeGroup\.check\(' -or
     $settingsSource -notmatch '(?s)modeGroup\.setOnCheckedChangeListener\(\(group, selected\) -> \{\s*if \(syncing\) return;' -or
     $settingsSource -notmatch '(?s)powerSwitch = toggle\("[^"]*", BarService\.power\(this\), \(view, checked\) -> \{\s*if \(syncing\) return;' -or
+    $settingsSource -notmatch '(?s)lockedSwitch = toggle\("화면이 꺼지거나 잠긴 상태에서 Assistant 호출", BarService\.lockedAssist\(this\), \(view, checked\) -> \{\s*if \(syncing\) return;' -or
     $settingsSource -notmatch '(?s)bootSwitch = toggle\("[^"]*", BootRecovery\.wanted\(this\), \(view, checked\) -> \{\s*if \(syncing\) return;') {
     throw 'Settings refresh must not trigger repair or enable/disable setters'
 }
@@ -622,12 +719,26 @@ $securityChecks++
 $barService = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'micts/fast-launch/BarService.java'))
 if ($barService -match 'GLOBAL_ACTION_BACK') { throw 'Touch-area service must not redirect through global back actions' }
 $securityChecks++
-if ($barService -match 'TYPE_WINDOW_STATE_CHANGED|com\.heytap\.speechassist|com\.coloros\.colordirectservice') {
-    throw 'Touch-area service must not subscribe to OEM assistant windows'
+# Accessibility events stay fully unsubscribed: no window events, packages or flags, and no event handling.
+if ($barService -match 'TYPE_WINDOW_|TYPE_VIEW_|com\.heytap\.speechassist|com\.coloros\.colordirectservice|FLAG_RETRIEVE_INTERACTIVE_WINDOWS|FLAG_REPORT_VIEW_IDS|FLAG_REQUEST_' -or
+    $barService -notmatch 'info\.eventTypes = 0;\s*info\.packageNames = null;\s*info\.flags = 0;\s*setServiceInfo\(info\);' -or
+    ([regex]::Matches($barService, '\.eventTypes\s*=')).Count -ne 1 -or ([regex]::Matches($barService, '\.packageNames\s*=')).Count -ne 1 -or
+    ([regex]::Matches($barService, 'info\.flags\s*=')).Count -ne 1 -or
+    $barService -notmatch 'public void onAccessibilityEvent\(AccessibilityEvent event\) \{ \}') {
+    throw 'Touch-area service must keep eventTypes 0, packageNames null and flags 0, with an empty event handler'
 }
 $securityChecks++
-if ($barService -notmatch '\.eventTypes\s*=\s*0\s*;' -or $barService -notmatch '\.packageNames\s*=\s*null\s*;') {
-    throw 'Touch-area service must explicitly disable accessibility event subscriptions'
+# Retired boot auto-Allow: no consent state, node/window reading, clicks or approval history anywhere.
+if (Test-Path -LiteralPath (Join-Path $appFolder 'BootConsent.java')) { throw 'Retired boot auto-Allow source must be deleted' }
+if (($allSources.Values -join "`n") -match 'BootConsent|performAction|ACTION_CLICK|AccessibilityNodeInfo|AccessibilityWindowInfo|getWindows\(|getRootInActiveWindow|findAccessibilityNodeInfos|getSource\(|log_approved_boot|LOG_APPROVED|bootCompleted|AutoApproval|autoBridge|autoSession|dispatchGesture|takeScreenshot|getBoundsIn|performGlobalAction|ACTION_SET_TEXT') {
+    throw 'No automatic Allow: no node or window reading, clicks, gestures, screenshots or boot approval history'
+}
+$securityChecks++
+# The log-access confirmation is always answered by the user: manual requests and the first-unlock prompt only open it.
+if ($barService -notmatch 'static void requestApproval\(Context context\) \{\s*prefs\(context\)\.edit\(\)\.putBoolean\(LOG_DECLINED, false\)\.apply\(\);\s*launchBridge\(context\);\s*\}' -or
+    $barService -notmatch 'bar\.edit\(\)\.putInt\(LOG_AUTO, attempts \+ 1\)\.apply\(\);\s*launchBridge\(this\);\s*\}' -or
+    $allSources['BootReceiver.java'] -match 'BarService\.') {
+    throw 'Manual and first-unlock log approval prompts must only be shown, never answered by the app'
 }
 $securityChecks++
 if ($publicSettings -match 'nativeSwitch|setup_native_bar|기본 바 애니메이션 연결|\bNativeBar\b') {
@@ -649,10 +760,27 @@ if (Test-Path -LiteralPath (Join-Path $PSScriptRoot 'micts/fast-launch/NativeBar
 $securityChecks++
 $metadata = New-Object Xml.XmlDocument
 $metadata.Load((Join-Path $PSScriptRoot 'micts/fast-launch/res/xml/bottom_search_accessibility.xml'))
-foreach ($capability in @('canRetrieveWindowContent','canPerformGestures','canTakeScreenshot')) {
+foreach ($capability in @('canRetrieveWindowContent','canPerformGestures','canTakeScreenshot','isAccessibilityTool')) {
     if ($metadata.DocumentElement.GetAttribute($capability,$namespaces.LookupNamespace('android')) -ne 'false') {
         throw ('Touch-area service must not request capability: '+$capability)
     }
     $securityChecks++
 }
-Write-Output ('PASS: '+$securityChecks+' automation, log-session and accessibility security checks; retired agent, window handoff and screen capabilities remain disabled.')
+# No static event, package or flag subscription in XML either.
+if (@($metadata.DocumentElement.Attributes | Where-Object { $_.LocalName -in @('accessibilityEventTypes','packageNames','accessibilityFlags','canRequestFilterKeyEvents','canRequestTouchExplorationMode','canControlMagnification') }).Count -ne 0) {
+    throw 'Accessibility metadata must not subscribe to events, packages or flags'
+}
+$securityChecks++
+# One CTS classification: readiness warnings and the launch path agree (default target or MiCTS picked from the list).
+if ($allSources['SetupActivity.java'] -notmatch 'MainActivity\.cts\(preferences\.getString\(MainActivity\.TARGET_COMPONENT, ""\)\)' -or
+    $allSources['MainActivity.java'] -notmatch 'if \(!cts\(selected\)\) \{' -or
+    ([regex]::Matches($allSources['MainActivity.java'], '"com\.parallelc\.micts\.ui\.activity\.MainActivity"')).Count -ne 2) {
+    throw 'Settings readiness and MainActivity must share one CTS target classification'
+}
+$securityChecks++
+# Last-attempt diagnostics record request acceptance/handoff only; they never claim a visible CTS or Gemini window.
+foreach ($name in @('BarService.java','MainActivity.java','StatusPolicy.java')) {
+    if ($allSources[$name] -match '떴|열렸|표시됨|성공') { throw ('Diagnostics must not claim visual success: '+$name) }
+}
+$securityChecks++
+Write-Output ('PASS: '+$securityChecks+' automation, log-session and accessibility security checks; retired agent, window handoff, window content, gesture and screenshot capabilities remain disabled; no automatic Allow.')

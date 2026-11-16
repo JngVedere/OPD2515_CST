@@ -9,8 +9,8 @@ import android.util.Log;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
- * Scoped rebind of an already selected Google voice interaction service, run only on explicit user actions
- * (Start, enabling the power option, or the repair button), never per gesture.
+ * Scoped rebind of an already selected Google voice interaction service, run before every accepted power
+ * long-press request (prepare) and from the explicit repair button; never for the bottom bar or touch area.
  * Observed on OPD2515: the key stays Google but the system binding is disconnected (dumpsys
  * "mBound=true mService=null"); session requests are then accepted while no assistant window appears.
  * Clearing the key briefly and writing back the exact same value rebinds it. No other assistant is
@@ -22,6 +22,8 @@ final class VoiceRepair {
     static final String KEY = "voice_interaction_service", PENDING = "voice_repair_original";
     /** Unbound window proven on device (350 ms); the system rebinds after the exact value returns. */
     static final long UNBOUND_MS = 350;
+    /** ponytail: fixed settle after the restore (no readiness signal without polling); tune on device if Gemini still misses. */
+    static final long SETTLE_MS = 30;
     private static final String TAG = "PadVoice", GOOGLE = "com.google.android.googlequicksearchbox/";
     private static final AtomicBoolean RUNNING = new AtomicBoolean();
 
@@ -62,6 +64,39 @@ final class VoiceRepair {
             Log.i(TAG, "rebind restored=" + restored);
             return restored;
         } finally { RUNNING.set(false); }
+    }
+
+    /** prepare() outcomes for diagnostics; only positive values let the request go on to Gemini. */
+    static final int REBOUND = 1, NO_WSS = 2, NOT_GOOGLE = 3, BUSY = -1, RESTORE_PENDING = -2, NOT_RESTORED = -3, INTERRUPTED = -4, ERROR = -5;
+
+    static boolean ready(int outcome) { return outcome > 0; }
+
+    static String describe(int outcome) {
+        switch (outcome) {
+            case REBOUND: return "Google 재연결 완료 (원래 값 복원)";
+            case NO_WSS: return "Google 재연결 생략 (보안 설정 쓰기 권한 없음)";
+            case NOT_GOOGLE: return "Google 재연결 생략 (Google 음성 서비스 미선택)";
+            case BUSY: return "Google 재연결 중복 (다른 재연결 진행 중)";
+            case RESTORE_PENDING: return "이전 재연결의 원래 값 복원 미완료";
+            case NOT_RESTORED: return "Google 재연결 실패 (원래 값 복원 미확인 또는 다른 재연결과 겹침)";
+            case INTERRUPTED: return "Google 재연결 대기 중단";
+            default: return "Google 재연결 오류";
+        }
+    }
+
+    /**
+     * Power long press, worker thread only: rebinds the selected Google service, then waits SETTLE_MS for the
+     * system to bind it again. Positive = the request may go on to Gemini: REBOUND with the exact original restored,
+     * or nothing to rebind (NO_WSS / NOT_GOOGLE; the launch itself then decides). Negative = the original
+     * is not confirmed back (journal kept for recover()) or another rebind is running.
+     */
+    static int prepare(Context context) {
+        if (busy()) return BUSY; // Another rebind owns the selection right now.
+        if (!finish(context)) return RESTORE_PENDING; // An earlier failed restore must put the exact original back first; fail closed.
+        if (!activationWanted(context, true)) return writable(context) ? NOT_GOOGLE : NO_WSS;
+        if (!run(context)) return NOT_RESTORED;
+        try { Thread.sleep(SETTLE_MS); return REBOUND; }
+        catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); return INTERRUPTED; }
     }
 
     /** Service start: completes a repair interrupted by process death. Never runs beside an active repair. */
