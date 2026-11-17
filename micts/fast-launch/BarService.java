@@ -27,24 +27,28 @@ public final class BarService extends AccessibilityService {
     private static volatile long bridgeSince;
     private static boolean preview;
     private final Handler handler = Handler.createAsync(Looper.getMainLooper());
+    /** Taskbar or navigation mode switched: the default touch-area width may change. Fires only on a change. */
+    private final android.database.ContentObserver barLayout = new android.database.ContentObserver(handler) {
+        @Override public void onChange(boolean selfChange) { refreshArea(); }
+    };
     private WindowManager windows;
     private View target;
     private float downX, downY;
     private boolean moved, holdFired;
+    /** Hold time of the current press: read once at ACTION_DOWN, so the timer and the release check agree. */
+    private long pressHold = TouchArea.HOLD;
     private int attachAttempts;
     private LogSession logs;
     /** Main thread only. One power rebind in flight; bumping powerRequest cancels it (screen off, power off, session change, destroy). */
     private boolean powerPending;
     private long powerRequest, powerAttempt;
-    /** Main thread only: last warm-up (elapsedRealtime) and a kill seen while the screen was off (warmed at screen on). */
-    private long lastWarm = -WARM_INTERVAL;
-    private boolean warmOnScreen;
     /**
-     * After a kill, the next Gemini request reaches a cold :interactor and no window appears (device: 11/11 after clear all);
-     * a rebind ahead of time restarts it (3/3). ponytail: fixed 0.5 s delay and 3 s rate limit (bounds a kill loop to one
-     * 350 ms unbind per 3 s), tune on device.
+     * Main thread only. After a kill, the next Gemini request reaches a cold :interactor and no window appears (device:
+     * 11/11 after clear all); a rebind ahead of time restarts it (3/3). Timing: LogTrigger.Warm. warmOnScreen: a kill
+     * seen while the screen was off, warmed at screen on.
      */
-    private static final long WARM_DELAY = 500, WARM_INTERVAL = 3000;
+    private final LogTrigger.Warm warmTiming = new LogTrigger.Warm();
+    private boolean warmOnScreen;
     /** Newest attempt per pathway only (StatusPolicy records); main thread only. */
     static final String LAST_BAR = "last_bar", LAST_POWER = "last_power", LAST_DOUBLE = "last_double";
     private static final String POWER_INPUT = "전원 버튼 길게 누르기 (기기 로그)";
@@ -192,6 +196,46 @@ public final class BarService extends AccessibilityService {
         if (!BarGesture.restore(context)) android.widget.Toast.makeText(context,
             "기본 바 설정 복구를 완료하지 못했습니다. 권한과 저장 공간을 확인한 뒤 다시 끄기를 눌러주세요.",
             android.widget.Toast.LENGTH_LONG).show();
+    }
+
+    static int holdMs(Context context) { return TouchArea.hold(prefs(context).getInt(TouchArea.HOLD_KEY, TouchArea.HOLD)); }
+
+    /** Touch area for the current orientation, clamped to the screen (dp). */
+    static int[] area(Context context, boolean landscape, int screenWidth, int screenHeight) {
+        SharedPreferences bar = prefs(context);
+        String taskbar = null, nav = null; // unreadable: narrow default
+        try { taskbar = Settings.System.getString(context.getContentResolver(), SetupActivity.TASKBAR); } catch (RuntimeException unreadable) { }
+        try { nav = Settings.Secure.getString(context.getContentResolver(), BarGesture.NAV_KEY); } catch (RuntimeException unreadable) { }
+        boolean wide = TouchArea.taskbar(taskbar, nav);
+        int[] raw = new int[4];
+        for (int i = 0; i < 4; i++) raw[i] = bar.getInt(TouchArea.key(landscape, TouchArea.FIELDS[i]), TouchArea.fallback(TouchArea.FIELDS[i], wide, landscape));
+        return TouchArea.area(raw[0], raw[1], raw[2], raw[3], screenWidth, screenHeight);
+    }
+
+    /** Applies a changed area to the attached touch target immediately (the hold time is read at each press). */
+    static void refreshArea() {
+        BarService service = instance;
+        if (service == null || service.target == null || !service.target.isAttachedToWindow()) return;
+        try { service.windows.updateViewLayout(service.target, service.areaParams()); }
+        catch (IllegalArgumentException detached) { }
+    }
+
+    private WindowManager.LayoutParams areaParams() {
+        android.graphics.Rect bounds = windows.getMaximumWindowMetrics().getBounds();
+        float density = getResources().getDisplayMetrics().density;
+        int[] area = area(this, bounds.width() > bounds.height(),
+            Math.round(bounds.width() / density), Math.round(bounds.height() / density));
+        WindowManager.LayoutParams p = new WindowManager.LayoutParams(dp(area[2]), dp(area[3]),
+            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
+                | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS, PixelFormat.TRANSLUCENT);
+        p.gravity = Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL;
+        p.x = dp(area[0]);
+        p.y = dp(area[1]);
+        p.setFitInsetsTypes(0);
+        p.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS;
+        p.setTitle("PadBarTouchTarget");
+        return p;
     }
 
     static void showPreview(boolean visible) {
@@ -353,6 +397,7 @@ public final class BarService extends AccessibilityService {
             notifyState();
         }
         @Override public void trigger(int kind) {
+            if (kind == LogTrigger.ANY_KILL) { anyKill(); return; } // frequent and routine: not logged
             Log.i("PadLog", "trigger kind=" + kind + " instance=" + (instance == BarService.this));
             if (kind == LogTrigger.BAR) barGesture();
             // Home long press exists only in 3-button navigation; elsewhere a caller-1000 Breeno line is not the bar.
@@ -398,16 +443,29 @@ public final class BarService extends AccessibilityService {
     /** Google's :interactor was killed: restart it now (or at the next screen on) so the next power press is not cold. */
     private void googleDied() {
         if (!getSystemService(PowerManager.class).isInteractive()) { warmOnScreen = true; return; }
+        scheduleWarm(warmTiming.googleDied(SystemClock.elapsedRealtime()));
+    }
+
+    /** Let the kill sweep (clear all) finish first: each further kill pushes the warm-up back, up to the deadline. */
+    private void anyKill() {
+        long at = warmTiming.anyKill(SystemClock.elapsedRealtime());
+        if (at >= 0) scheduleWarm(at);
+    }
+
+    private void scheduleWarm(long at) {
         handler.removeCallbacks(warm);
-        handler.postDelayed(warm, WARM_DELAY); // Let the kill sweep (clear all) finish first.
+        if (at < 0) { Log.i("PadVoice", "warm-up skipped: repeated Google kill"); return; }
+        handler.postDelayed(warm, Math.max(0, at - SystemClock.elapsedRealtime()));
     }
 
     private final Runnable warm = () -> {
         warmOnScreen = false;
-        long now = SystemClock.elapsedRealtime();
-        if (instance != this || !power(this) || powerPending || now - lastWarm < WARM_INTERVAL
-            || !VoiceRepair.activationWanted(this, true)) { Log.i("PadVoice", "warm-up skipped"); return; }
-        lastWarm = now;
+        if (instance != this || !power(this) || powerPending || !VoiceRepair.activationWanted(this, true)) {
+            warmTiming.cancel();
+            Log.i("PadVoice", "warm-up skipped");
+            return;
+        }
+        warmTiming.warmed(SystemClock.elapsedRealtime());
         Context app = getApplicationContext();
         try {
             new Thread(() -> Log.i("PadVoice", "warm-up after Google kill restored=" + VoiceRepair.run(app)), "PadGoogleWarm").start();
@@ -462,6 +520,8 @@ public final class BarService extends AccessibilityService {
         // These are protected system broadcasts; SystemUI may use a different UID.
         if (Build.VERSION.SDK_INT >= 33) registerReceiver(screen, filter, RECEIVER_EXPORTED);
         else registerReceiver(screen, filter);
+        getContentResolver().registerContentObserver(Settings.System.getUriFor(SetupActivity.TASKBAR), false, barLayout);
+        getContentResolver().registerContentObserver(Settings.Secure.getUriFor(BarGesture.NAV_KEY), false, barLayout);
     }
 
     @Override protected void onServiceConnected() {
@@ -476,11 +536,14 @@ public final class BarService extends AccessibilityService {
     private void configure() {
         AccessibilityServiceInfo info = getServiceInfo();
         if (info == null) return;
-        // Touch events belong to our own overlay. No other apps' window events.
-        info.eventTypes = 0;
-        info.packageNames = null;
-        info.flags = 0;
-        setServiceInfo(info);
+        // Touch events belong to our own overlay. No other apps' window events. Written only when it differs: every
+        // setServiceInfo makes system_server recompute the whole accessibility state (device: 3x per screen off/on/unlock).
+        if (info.eventTypes != 0 || info.packageNames != null || info.flags != 0) {
+            info.eventTypes = 0;
+            info.packageNames = null;
+            info.flags = 0;
+            setServiceInfo(info);
+        }
         running = enabled(this);
         handler.removeCallbacks(restoreTarget);
         handler.removeCallbacks(longPress);
@@ -533,7 +596,8 @@ public final class BarService extends AccessibilityService {
                     moved = false; holdFired = false;
                     downX = event.getRawX(); downY = event.getRawY();
                     handler.removeCallbacks(longPress);
-                    handler.postDelayed(longPress, BarGesture.HOLD_MS);
+                    pressHold = holdMs(this);
+                    handler.postDelayed(longPress, pressHold);
                     break;
                 case MotionEvent.ACTION_MOVE:
                     if (Math.hypot(event.getRawX() - downX, event.getRawY() - downY) > slop) {
@@ -544,7 +608,7 @@ public final class BarService extends AccessibilityService {
                 case MotionEvent.ACTION_UP:
                     handler.removeCallbacks(longPress);
                     // Some OEM input scheduling delays the timer until release.
-                    if (BarGesture.releaseShouldTrigger(event.getEventTime()-event.getDownTime(), moved, holdFired)) longPress.run();
+                    if (BarGesture.releaseShouldTrigger(event.getEventTime()-event.getDownTime(), pressHold, moved, holdFired)) longPress.run();
                     break;
                 case MotionEvent.ACTION_POINTER_DOWN:
                 case MotionEvent.ACTION_CANCEL:
@@ -554,16 +618,8 @@ public final class BarService extends AccessibilityService {
             }
             return true;
         });
-        WindowManager.LayoutParams p = new WindowManager.LayoutParams(dp(200), dp(38),
-            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
-                | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS, PixelFormat.TRANSLUCENT);
-        p.gravity = Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL;
-        p.setFitInsetsTypes(0);
-        p.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS;
-        p.setTitle("PadBarTouchTarget");
         try {
-            windows.addView(view, p);
+            windows.addView(view, areaParams());
             target = view;
             BarGesture.disableBreenoGesture(this);
             updateAppearance();
@@ -595,6 +651,7 @@ public final class BarService extends AccessibilityService {
         PowerButton.restore(this); // No reader, no screen-off from this app: the system short press comes back first.
         if (nativeMode(this)) BarGesture.restore(this); // No reader while unbound; reapplied after the next approved session.
         unregisterReceiver(screen);
+        getContentResolver().unregisterContentObserver(barLayout);
         super.onDestroy();
     }
 

@@ -71,6 +71,7 @@ final class LogSession {
         LogTrigger.Gate gate = new LogTrigger.Gate(System.currentTimeMillis());
         boolean trusted = false, coalesced = false;
         int diagnostics = 0;
+        long googleKill = -1;
         try {
             created.connect(new LocalSocketAddress("logdr", LocalSocketAddress.Namespace.RESERVED));
             created.getOutputStream().write(LogTrigger.COMMAND.getBytes(StandardCharsets.US_ASCII));
@@ -90,7 +91,14 @@ final class LogSession {
                 int kind = trusted ? LogTrigger.classify(packet, count, systemUiUid, launcherUid, user) : LogTrigger.NONE;
                 long now = System.currentTimeMillis();
                 int outcome = kind == LogTrigger.NONE ? LogTrigger.NOT_TRIGGER : gate.check(kind, LogTrigger.millis(packet), now);
-                if ((candidate != LogTrigger.NONE || kind != LogTrigger.NONE) && diagnostics < MAX_DIAGNOSTICS) {
+                if (outcome == LogTrigger.ACCEPT && kind == LogTrigger.GOOGLE_DIED) googleKill = LogTrigger.millis(packet);
+                // A kill outside a warm-up window changes nothing on the main thread: do not wake it.
+                if (outcome == LogTrigger.ACCEPT && kind == LogTrigger.ANY_KILL && !LogTrigger.killUseful(LogTrigger.millis(packet), googleKill))
+                    outcome = LogTrigger.NOT_TRIGGER;
+                // Routine process kills never spend the diagnostics budget; a kill line that names Google's :interactor
+                // but did not classify as GOOGLE_DIED (candidate GOOGLE_DIED) is still logged, so a format change shows up.
+                boolean routineKill = kind == LogTrigger.ANY_KILL && candidate == LogTrigger.NONE;
+                if (!routineKill && (candidate != LogTrigger.NONE || kind != LogTrigger.NONE) && diagnostics < MAX_DIAGNOSTICS) {
                     diagnostics++;
                     Log.i(TAG, LogTrigger.describe(packet, count, candidate, kind, outcome, now) + " trusted=" + trusted);
                 }

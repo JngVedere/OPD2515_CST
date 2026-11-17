@@ -14,8 +14,9 @@ final class LogTrigger {
      * wait for a second press (a single press while the screen was off is never POWER_SINGLE).
      * HOME: the same Breeno start failure as BAR but requested by system_server (caller 1000): 3-button home long press,
      * and also the power long press's tail, which the Gate drops after a power marker (POWER_TAIL).
+     * ANY_KILL: any other UserAwareMgr process kill; only times the Google warm-up after a clear-all sweep (Warm).
      */
-    static final int NONE = 0, BAR = 1, POWER = 2, GOOGLE_DIED = 3, POWER_SINGLE = 4, POWER_DOUBLE = 5, HOME = 6;
+    static final int NONE = 0, BAR = 1, POWER = 2, GOOGLE_DIED = 3, POWER_SINGLE = 4, POWER_DOUBLE = 5, HOME = 6, ANY_KILL = 7;
     /** Device: the power long press logs onLongPress, then its caller-1000 Breeno line 2 ms later. */
     static final long POWER_TAIL = 1000;
     /** The double press's own "send base.powerPress" line follows its onMultiPress line in the same millisecond. */
@@ -34,7 +35,8 @@ final class LogTrigger {
     private static final byte[] BAR_TAG = ascii("ActivityManager");
     /** Observed OPD2515 (system_server, INFO): "process killed: {pkgName='<pkg>', serviceName='', procName=<proc>, pid=..." */
     private static final byte[] KILL_TAG = ascii("UserAwareMgr");
-    private static final String KILL_PREFIX = "process killed: {pkgName='com.google.android.googlequicksearchbox', ",
+    private static final String KILL_ANY = "process killed: {pkgName='",
+        KILL_PREFIX = "process killed: {pkgName='com.google.android.googlequicksearchbox', ",
         KILL_PROC = ", procName=com.google.android.googlequicksearchbox:interactor, ";
     /** Observed OPD2515 (system_server): one line per handled press, after any multi-press wait. */
     private static final byte[] PRESS_TAG = ascii("KEYLOG_PhoneWindowManagerExtImpl");
@@ -83,7 +85,8 @@ final class LogTrigger {
         }
         if (same(p, tag, tagEnd, KILL_TAG)) {
             if (p[hdr] != INFO || messageEnd - message > 4096) return NONE;
-            return googleDied(new String(p, message, messageEnd - message, StandardCharsets.UTF_8)) ? GOOGLE_DIED : NONE;
+            String text = new String(p, message, messageEnd - message, StandardCharsets.UTF_8);
+            return googleDied(text) ? GOOGLE_DIED : anyKill(text) ? ANY_KILL : NONE;
         }
         if (p[hdr] != WARN || !same(p, tag, tagEnd, BAR_TAG)) return NONE;
         int caller = barCaller(new String(p, message, messageEnd - message, StandardCharsets.UTF_8), user);
@@ -121,6 +124,12 @@ final class LogTrigger {
             && message.indexOf("procName=") == message.lastIndexOf("procName=");
     }
 
+    /** Any process kill in the same exact shape: one package and one process name. Nothing of it leaves this class. */
+    static boolean anyKill(String message) {
+        return message != null && message.startsWith(KILL_ANY) && message.indexOf("', ", KILL_ANY.length()) > KILL_ANY.length()
+            && message.indexOf("procName=") > 0 && message.indexOf("procName=") == message.lastIndexOf("procName=");
+    }
+
     private static int zero(byte[] p, int from, int end) {
         for (int i = from; i < end; i++) if (p[i] == 0) return i;
         return end;
@@ -135,13 +144,13 @@ final class LogTrigger {
     /** Gate outcomes, for structural diagnostics. */
     static final int ACCEPT = 0, NOT_TRIGGER = 1, BEFORE_SESSION = 2, FUTURE = 3, STALE = 4, DUPLICATE = 5;
     private static final String[] OUTCOMES = {"ACCEPT", "NOT_TRIGGER", "BEFORE_SESSION", "FUTURE", "STALE", "DUPLICATE"};
-    private static final String[] KINDS = {"NONE", "BAR", "POWER", "GOOGLE_DIED", "POWER_SINGLE", "POWER_DOUBLE", "HOME"};
+    private static final String[] KINDS = {"NONE", "BAR", "POWER", "GOOGLE_DIED", "POWER_SINGLE", "POWER_DOUBLE", "HOME", "ANY_KILL"};
 
     /** Freshness, replay and duplicate-marker gate for one log session. Reader thread only. */
     static final class Gate {
         private final long watermark;
-        private final long[] last = new long[7];
-        private final boolean[] seen = new boolean[7];
+        private final long[] last = new long[8];
+        private final boolean[] seen = new boolean[8];
         /** Every power marker, accepted or not (a duplicate onLongPress still has its own Breeno tail). */
         private long lastPower;
         private boolean powerSeen;
@@ -150,11 +159,12 @@ final class LogTrigger {
         boolean accept(int kind, long entry, long now) { return check(kind, entry, now) == ACCEPT; }
 
         int check(int kind, long entry, long now) {
-            if (kind < BAR || kind > HOME) return NOT_TRIGGER;
+            if (kind < BAR || kind > ANY_KILL) return NOT_TRIGGER;
             if (kind == POWER) { powerSeen = true; lastPower = entry; }
             if (entry < watermark) return BEFORE_SESSION;
             if (now < entry) return FUTURE;
             if (now - entry > MAX_AGE) return STALE;
+            if (kind == ANY_KILL) return ACCEPT; // A sweep is many kills milliseconds apart: each one counts, no debounce.
             if (seen[kind] && entry - last[kind] < DEBOUNCE) return DUPLICATE;
             // A double press also emits the single-press line; it is part of the double, never a screen-off request.
             if (kind == POWER_SINGLE && seen[POWER_DOUBLE] && entry >= last[POWER_DOUBLE] && entry - last[POWER_DOUBLE] < DOUBLE_PAIR)
@@ -164,6 +174,47 @@ final class LogTrigger {
             seen[kind] = true; last[kind] = entry;
             return ACCEPT;
         }
+    }
+
+    /**
+     * Google warm-up after a recents clear-all (main thread; elapsedRealtime ms). Device, 6 sweeps: the Google :interactor
+     * kill comes late in the sweep and the last kill follows within 14 ms (largest gap between kills 52 ms). So the warm-up
+     * starts once kills have been quiet for WARM_QUIET, at most WARM_MAX after the Google kill. Within WARM_INTERVAL of the
+     * last warm-up, one more Google kill is warmed again (a re-kill right after warming); a further one is not (no loop).
+     */
+    static final long WARM_QUIET = 150, WARM_MAX = 500, WARM_INTERVAL = 3000;
+
+    /**
+     * Reader side: an ANY_KILL can only move a warm-up that is waiting, which happens at most WARM_MAX after a Google kill.
+     * Other kills are dropped before they wake the main thread. googleKill: entry time of the last accepted GOOGLE_DIED, or -1.
+     */
+    static boolean killUseful(long entry, long googleKill) {
+        return googleKill >= 0 && entry >= googleKill && entry - googleKill <= WARM_MAX;
+    }
+    static final class Warm {
+        private long deadline = -1, lastWarm = Long.MIN_VALUE / 2;
+        private boolean retryUsed;
+
+        /** When to warm (elapsedRealtime), or -1: rate limited. A Google kill while already waiting keeps the first deadline. */
+        long googleDied(long now) {
+            if (deadline < 0) {
+                if (now - lastWarm < WARM_INTERVAL) {
+                    if (retryUsed) return -1;
+                    retryUsed = true;
+                } else retryUsed = false;
+                deadline = now + WARM_MAX;
+            }
+            return Math.min(now + WARM_QUIET, deadline);
+        }
+
+        /** Any other kill while waiting restarts the quiet window, never past the deadline; -1 when not waiting. */
+        long anyKill(long now) { return deadline < 0 ? -1 : Math.min(now + WARM_QUIET, deadline); }
+
+        /** The warm-up ran. */
+        void warmed(long now) { deadline = -1; lastWarm = now; }
+
+        /** The wait ended without a warm-up (option off, power request pending, screen off). */
+        void cancel() { deadline = -1; }
     }
 
     /** Main-thread recheck: a queued trigger delayed past the same age window (e.g. process freeze/thaw) is dropped. */

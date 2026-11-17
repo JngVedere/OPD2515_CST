@@ -22,8 +22,8 @@ final class VoiceRepair {
     static final String KEY = "voice_interaction_service", PENDING = "voice_repair_original";
     /** Unbound window proven on device (350 ms); the system rebinds after the exact value returns. */
     static final long UNBOUND_MS = 350;
-    /** ponytail: fixed settle after the restore (no readiness signal without polling); tune on device if Gemini still misses. */
-    static final long SETTLE_MS = 30;
+    /** Default settle after the restore (no readiness signal without polling); the user can raise it (TouchArea.SETTLE_KEY). */
+    static final long SETTLE_MS = TouchArea.SETTLE;
     private static final String TAG = "PadVoice", GOOGLE = "com.google.android.googlequicksearchbox/";
     private static final AtomicBoolean RUNNING = new AtomicBoolean();
 
@@ -85,7 +85,7 @@ final class VoiceRepair {
     }
 
     /**
-     * Power long press, worker thread only: rebinds the selected Google service, then waits SETTLE_MS for the
+     * Power long press, worker thread only: rebinds the selected Google service, then waits settle() (default SETTLE_MS) for the
      * system to bind it again. Positive = the request may go on to Gemini: REBOUND with the exact original restored,
      * or nothing to rebind (NO_WSS / NOT_GOOGLE; the launch itself then decides). Negative = the original
      * is not confirmed back (journal kept for recover()) or another rebind is running.
@@ -95,9 +95,11 @@ final class VoiceRepair {
         if (!finish(context)) return RESTORE_PENDING; // An earlier failed restore must put the exact original back first; fail closed.
         if (!activationWanted(context, true)) return writable(context) ? NOT_GOOGLE : NO_WSS;
         if (!run(context)) return NOT_RESTORED;
-        try { Thread.sleep(SETTLE_MS); return REBOUND; }
+        try { Thread.sleep(settle(context)); return REBOUND; }
         catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); return INTERRUPTED; }
     }
+
+    static int settle(Context context) { return TouchArea.settle(prefs(context).getInt(TouchArea.SETTLE_KEY, TouchArea.SETTLE)); }
 
     /** Service start: completes a repair interrupted by process death. Never runs beside an active repair. */
     static boolean recover(Context context) { return busy() || finish(context); }

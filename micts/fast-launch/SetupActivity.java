@@ -21,10 +21,12 @@ public final class SetupActivity extends Activity {
     /** ColorOS "제스처 안내 막대 숨기기" (1 hidden, 0 shown); read only, never written. */
     private static final String GESTURE_BAR = "navbar_gesture_visibility";
     /** ColorOS taskbar switch (system table, 1 on); read only, never written. */
-    private static final String TASKBAR = "enable_launcher_taskbar";
+    static final String TASKBAR = "enable_launcher_taskbar";
     private static final int ERROR_COLOR = 0xFFD93025;
     private TextView status, logStatus, powerStatus, doubleStatus, recentStatus, targetLabel, doubleLabel;
     private int secondary;
+    /** Theme primary text colour with its disabled state, so a disabled slider label looks disabled. */
+    private android.content.res.ColorStateList primary;
     private LinearLayout body, warnings, updateBanner, statusCard;
     private Switch autoUpdateSwitch;
     /** Where text/toggle/button add views: body, or the current settings card opened by section(). */
@@ -36,6 +38,12 @@ public final class SetupActivity extends Activity {
     private boolean waitingAccessibility;
     /** True while controls are synced from stored state; listeners then must not act as if the user changed them. */
     private boolean syncing;
+    /** Touch-area sliders for the current orientation ({x, bottom, width, height}), the hold slider and the Gemini wait slider. */
+    private final Slider[] areaSliders = new Slider[4];
+    /** Orientation badge of the touch area section: blue while the area is used, grey in native mode. */
+    private TextView facing;
+    private final android.graphics.drawable.GradientDrawable facingBox = new android.graphics.drawable.GradientDrawable();
+    private Slider holdSlider, settleSlider;
     private final BroadcastReceiver serviceState = new BroadcastReceiver() {
         @Override public void onReceive(Context context, Intent intent) { refresh(); }
     };
@@ -44,7 +52,7 @@ public final class SetupActivity extends Activity {
      * screen is visible. One observer for both URIs, so the single unregister in onStop removes both.
      */
     private final ContentObserver gestureBar = new ContentObserver(new Handler(Looper.getMainLooper())) {
-        @Override public void onChange(boolean selfChange) { refresh(); }
+        @Override public void onChange(boolean selfChange) { refresh(); showTuning(); } // default width follows the taskbar
     };
 
     @Override public void onCreate(Bundle state) {
@@ -68,8 +76,9 @@ public final class SetupActivity extends Activity {
         setContentView(scroll);
         text("Circle-to-Search Trigger", 24).setTypeface(null, android.graphics.Typeface.BOLD);
         text("하단 중앙을 길게 눌러 선택한 앱을 엽니다.", 18);
-        android.content.res.TypedArray colors = obtainStyledAttributes(new int[]{android.R.attr.textColorSecondary});
+        android.content.res.TypedArray colors = obtainStyledAttributes(new int[]{android.R.attr.textColorSecondary, android.R.attr.textColorPrimaryDisableOnly});
         secondary = colors.getColor(0, 0xFF808080);
+        primary = colors.getColorStateList(1);
         colors.recycle();
         // Update banner: filled only when the automatic check on open finds a newer version.
         updateBanner = new LinearLayout(this);
@@ -145,6 +154,16 @@ public final class SetupActivity extends Activity {
         });
         text("화면이 꺼졌거나 잠겨 있어도 전원 버튼으로 Gemini Assistant를 엽니다. 잠금을 풀거나 우회하지 않으며, 잠긴 상태에서는 화면 내용과 스크린샷을 보내지 않습니다.\nGemini의 잠금 화면 설정이 필요할 수 있고, 재부팅 후에는 첫 잠금 해제와 기기 로그 승인 뒤부터 동작합니다.", 14);
         divider(section);
+        settleSlider = slider("Gemini 요청 전 대기", "ms", 0, TouchArea.MAX_SETTLE, 5, false, value -> {
+            preferences.edit().putInt(TouchArea.SETTLE_KEY, value).apply();
+        });
+        text("전원 버튼을 누를 때마다 Google 음성 연결을 다시 잡은 뒤(약 0.35초) 이 시간만큼 더 기다렸다가 Gemini Assistant를 요청합니다. 가끔 뜨지 않으면 늘리고, 더 빨리 뜨게 하려면 줄이세요. 기본값은 " + TouchArea.SETTLE + "ms입니다.", 14);
+        button("Gemini 대기 기본값으로 되돌리기", () -> {
+            preferences.edit().remove(TouchArea.SETTLE_KEY).apply();
+            showTuning();
+            Toast.makeText(this, "Gemini 요청 전 대기를 기본값으로 되돌렸습니다.", Toast.LENGTH_SHORT).show();
+        });
+        divider(section);
         button("Google 음성 연결 다시 시작", this::repairVoice);
         text("Gemini Assistant가 뜨지 않을 때 눌러주세요. 이미 선택된 Google 음성 서비스를 약 0.35초 해제했다가 같은 값으로 되돌려 다시 연결하며, 다른 어시스턴트로 바꾸지 않습니다.\n보안 설정 쓰기 권한이 있으면 전원 버튼을 누를 때마다 자동으로도 실행됩니다.", 14);
 
@@ -158,6 +177,45 @@ public final class SetupActivity extends Activity {
             BarService.showPreview(checked);
         });
         text("하단 영역 인식의 실제 범위를 파란색으로 보여줍니다. 설정 화면을 벗어나면 다시 투명해집니다.", 14);
+        divider(section);
+        boolean landscape = landscape();
+        int[] screen = screenDp();
+        text("위치와 크기", 16).setTypeface(null, android.graphics.Typeface.BOLD);
+        // Which value set the sliders edit; the activity is recreated on rotation, so this always matches.
+        facing = text((landscape ? "가로" : "세로") + " 화면 값을 조절하는 중", 16);
+        facing.setTypeface(null, android.graphics.Typeface.BOLD);
+        facing.setGravity(android.view.Gravity.CENTER);
+        facingBox.setCornerRadius(dp(10));
+        facing.setBackground(facingBox);
+        showFacing(true); // refresh() greys it in native mode, like the sliders
+        facing.setPadding(dp(14), dp(10), dp(14), dp(10));
+        ((LinearLayout.LayoutParams) facing.getLayoutParams()).setMargins(0, dp(4), 0, dp(8));
+        text("가로 화면과 세로 화면 값을 따로 저장하며, 지금 방향의 값만 바뀝니다. 조절하는 동안 영역이 파란색으로 보입니다. 하단 영역 인식 방식에서만 쓰입니다.\n값을 누르면 숫자로 직접 입력할 수 있습니다. 너비 기본값은 제스처 바와 작업 표시줄이 함께 켜져 있으면 세로 " + TouchArea.TASKBAR_WIDTH + "dp · 가로 " + TouchArea.TASKBAR_WIDTH_LAND + "dp, 아니면 " + TouchArea.WIDTH + "dp입니다.", 14);
+        int side = Math.max(0, (screen[0] - TouchArea.MIN_WIDTH) / 2);
+        side -= side % 4; // symmetric multiple of the step, so the centred default 0 is a slider position
+        areaSliders[0] = slider("가로 위치 (가운데 기준)", "dp", -side, side, 4, true, value -> saveArea(0, value));
+        areaSliders[0].range = () -> {
+            int[] screenNow = screenDp();
+            int room = Math.max(0, (screenNow[0] - BarService.area(this, landscape(), screenNow[0], screenNow[1])[2]) / 2);
+            return new int[]{-room, room};
+        };
+        areaSliders[1] = slider("아래에서 띄우기", "dp", 0, Math.min(TouchArea.MAX_BOTTOM, screen[1] / 2), 2, true, value -> saveArea(1, value));
+        areaSliders[2] = slider("너비", "dp", TouchArea.MIN_WIDTH, screen[0], 4, true, value -> saveArea(2, value));
+        areaSliders[3] = slider("높이", "dp", TouchArea.MIN_HEIGHT, TouchArea.MAX_HEIGHT, 2, true, value -> saveArea(3, value));
+        divider(section);
+        holdSlider = slider("길게 누르기 인식 시간", "ms", TouchArea.MIN_HOLD, TouchArea.MAX_HOLD, 5, true, value -> {
+            preferences.edit().putInt(TouchArea.HOLD_KEY, value).apply();
+        });
+        text("짧을수록 빨리 열리지만, 너무 짧으면 일반 터치나 홈 제스처를 길게 누르기로 잘못 인식할 수 있습니다. 기본값은 " + TouchArea.HOLD + "ms입니다.", 14);
+        button("터치 영역 기본값으로 되돌리기", () -> {
+            SharedPreferences.Editor edit = preferences.edit().remove(TouchArea.HOLD_KEY);
+            for (boolean orientation : new boolean[]{false, true})
+                for (String field : TouchArea.FIELDS) edit.remove(TouchArea.key(orientation, field));
+            edit.apply();
+            BarService.refreshArea();
+            showTuning();
+            Toast.makeText(this, "가로·세로 화면의 위치·크기와 인식 시간을 기본값으로 되돌렸습니다.", Toast.LENGTH_SHORT).show();
+        });
 
         section("최근 앱");
         recentSwitch = toggle("최근 앱에 표시", preferences.getBoolean("show_recent", false), (view, checked) -> {
@@ -448,6 +506,14 @@ public final class SetupActivity extends Activity {
         if (message != null) phrase(message);
     }
 
+    /** Translucent fills read on both light and dark backgrounds; blue is the preview colour. */
+    private void showFacing(boolean active) {
+        int color = active ? 0xFF2563EB : 0xFF8A8A8A;
+        facing.setTextColor(color);
+        facingBox.setColor(active ? 0x262563EB : 0x1A808080);
+        facingBox.setStroke(dp(2), color);
+    }
+
     private TextView text(String value, int size) {
         TextView view = phrase(new TextView(this));
         view.setText(value); view.setTextSize(size);
@@ -528,6 +594,155 @@ public final class SetupActivity extends Activity {
         view.setText(label); view.setAllCaps(false);
         view.setOnClickListener(v -> action.run());
         section.addView(view, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+    }
+
+    /** Display orientation (not this window's: split screen or a floating window must not pick the other value set). */
+    private boolean landscape() {
+        android.graphics.Rect bounds = getWindowManager().getMaximumWindowMetrics().getBounds();
+        return bounds.width() > bounds.height();
+    }
+
+    /** Whole-display size in dp, the same bounds BarService lays the touch area out against. */
+    private int[] screenDp() {
+        android.graphics.Rect bounds = getWindowManager().getMaximumWindowMetrics().getBounds();
+        float density = getResources().getDisplayMetrics().density;
+        return new int[]{Math.round(bounds.width() / density), Math.round(bounds.height() / density)};
+    }
+
+    /**
+     * One area value changed: only that field is stored (clamped against the others), so untouched fields keep following
+     * their defaults (e.g. the taskbar width). Reads clamp all four together; applied live.
+     */
+    private void saveArea(int index, int value) {
+        boolean landscape = landscape();
+        int[] screen = screenDp();
+        int[] area = BarService.area(this, landscape, screen[0], screen[1]);
+        area[index] = value;
+        area = TouchArea.area(area[0], area[1], area[2], area[3], screen[0], screen[1]);
+        preferences.edit().putInt(TouchArea.key(landscape, TouchArea.FIELDS[index]), area[index]).apply();
+        area = BarService.area(this, landscape, screen[0], screen[1]);
+        for (int i = 0; i < 4; i++) areaSliders[i].show(area[i]); // the dragged one too: it shows the effective (clamped) value
+        BarService.refreshArea();
+    }
+
+    /** Programmatic slider positions from stored values (never written back: fromUser is false). */
+    private void showTuning() {
+        int[] screen = screenDp();
+        int[] area = BarService.area(this, landscape(), screen[0], screen[1]);
+        for (int i = 0; i < 4; i++) areaSliders[i].show(area[i]);
+        holdSlider.show(BarService.holdMs(this));
+        settleSlider.show(TouchArea.settle(preferences.getInt(TouchArea.SETTLE_KEY, TouchArea.SETTLE)));
+    }
+
+    private static final class Slider {
+        final SeekBar bar; final TextView label; final String name, unit; final int min, max, step;
+        final boolean preview;
+        final java.util.function.IntConsumer changed;
+        /** Range a typed value must be in right now ({low, high}); the horizontal position narrows it to the current width. */
+        java.util.function.Supplier<int[]> range;
+        Slider(SeekBar bar, TextView label, String name, String unit, int min, int max, int step, boolean preview,
+                java.util.function.IntConsumer changed) {
+            this.bar = bar; this.label = label; this.name = name; this.unit = unit; this.min = min; this.max = max; this.step = step;
+            this.preview = preview; this.changed = changed;
+            range = () -> new int[]{min, max};
+        }
+        /** The last position is exactly max even when max - min is not a multiple of step. */
+        int value(int progress) { return Math.min(max, min + progress * step); }
+        void show(int value) {
+            bar.setProgress(Math.round((value - min) / (float) step));
+            label.setText(name + " · " + value + unit);
+            label.setContentDescription(name + " " + value + unit + ", 눌러서 숫자로 입력");
+        }
+        void setEnabled(boolean enabled) { bar.setEnabled(enabled); label.setEnabled(enabled); }
+    }
+
+    /** Labelled slider; touching it shows the touch area in blue until released. */
+    private Slider slider(String name, String unit, int min, int max, int step, boolean preview, java.util.function.IntConsumer changed) {
+        TextView label = phrase(new TextView(this));
+        label.setTextSize(16);
+        if (primary != null) label.setTextColor(primary);
+        label.setPadding(0, dp(10), 0, 0);
+        section.addView(label, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        SeekBar bar = new SeekBar(this);
+        bar.setMax(Math.max(1, (max - min + step - 1) / step));
+        bar.setMinHeight(dp(40));
+        section.addView(bar, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        Slider slider = new Slider(bar, label, name, unit, min, max, step, preview, changed);
+        // Tap the value to type it. A disabled label (native mode) receives no clicks.
+        android.util.TypedValue ripple = new android.util.TypedValue();
+        getTheme().resolveAttribute(android.R.attr.selectableItemBackground, ripple, true);
+        label.setBackgroundResource(ripple.resourceId);
+        label.setOnClickListener(v -> typeValue(slider));
+        bar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
+                int value = slider.value(progress);
+                label.setText(name + " · " + value + unit);
+                if (fromUser) changed.accept(value);
+            }
+            @Override public void onStartTrackingTouch(SeekBar seekBar) { if (preview) BarService.showPreview(true); }
+            @Override public void onStopTrackingTouch(SeekBar seekBar) { if (preview) BarService.showPreview(areaSwitch.isChecked()); }
+        });
+        return slider;
+    }
+
+    /**
+     * Number entry for one slider. Input is local only and never logged. ASCII digits (and '-' only where negative values
+     * exist) through the key listener and an input filter (covers paste), at most TouchArea.MAX_TYPED characters, no
+     * autofill or IME learning. The text is parsed by TouchArea.typed and range-checked before anything is stored; stored
+     * values still go through the same clamps as the slider.
+     */
+    private void typeValue(Slider slider) {
+        int[] range = slider.range.get();
+        boolean signed = range[0] < 0;
+        EditText input = new EditText(this);
+        input.setInputType(android.text.InputType.TYPE_CLASS_NUMBER | (signed ? android.text.InputType.TYPE_NUMBER_FLAG_SIGNED : 0));
+        android.text.method.DigitsKeyListener digits = android.text.method.DigitsKeyListener.getInstance(java.util.Locale.ROOT, signed, false);
+        input.setKeyListener(digits);
+        input.setFilters(new android.text.InputFilter[]{digits, new android.text.InputFilter.LengthFilter(TouchArea.MAX_TYPED)});
+        input.setImportantForAutofill(android.view.View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS);
+        input.setImeOptions(android.view.inputmethod.EditorInfo.IME_ACTION_DONE
+            | android.view.inputmethod.EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING);
+        input.setSingleLine(true);
+        input.setSaveEnabled(false);
+        String current = slider.label.getText().toString();
+        String shown = current.substring(current.lastIndexOf(' ') + 1).replace(slider.unit, "");
+        if (TouchArea.typed(shown, signed) != null) input.setText(shown);
+        input.setSelectAllOnFocus(true);
+        input.setHint(range[0] + " ~ " + range[1]);
+        LinearLayout panel = new LinearLayout(this);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setPadding(dp(24), dp(8), dp(24), 0);
+        TextView help = phrase(new TextView(this));
+        help.setText(range[0] + "~" + range[1] + slider.unit + " 사이의 숫자를 입력하세요." + (signed ? " 왼쪽은 음수(-)입니다." : ""));
+        panel.addView(help);
+        panel.addView(input, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        AlertDialog dialog = new AlertDialog.Builder(this).setTitle(slider.name).setView(panel)
+            .setPositiveButton("저장", null).setNegativeButton("취소", null).create();
+        if (slider.preview) {
+            BarService.showPreview(true);
+            dialog.setOnDismissListener(d -> BarService.showPreview(areaSwitch.isChecked()));
+        }
+        Runnable save = () -> {
+            Integer value = TouchArea.typed(input.getText().toString(), signed);
+            int[] now = slider.range.get(); // re-read: the screen may have rotated while the dialog was open
+            if (value == null) { input.setError("숫자만 입력해주세요."); return; }
+            if (value < now[0] || value > now[1]) { input.setError(now[0] + "~" + now[1] + slider.unit + " 사이로 입력해주세요."); return; }
+            slider.changed.accept(value);
+            slider.show(value);
+            showTuning(); // every slider shows what was actually stored
+            dialog.dismiss();
+        };
+        input.setOnEditorActionListener((view, action, event) -> {
+            if (action != android.view.inputmethod.EditorInfo.IME_ACTION_DONE) return false;
+            save.run();
+            return true;
+        });
+        dialog.setOnShowListener(d -> {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> save.run()); // stays open on an error
+            input.requestFocus();
+            dialog.getWindow().setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE);
+        });
+        dialog.show();
     }
 
     private void applyRecentVisibility() {
@@ -811,6 +1026,9 @@ public final class SetupActivity extends Activity {
         syncing = true;
         try { modeGroup.check(nativeMode ? colorId : touchId); } finally { syncing = false; }
         areaSwitch.setEnabled(!nativeMode);
+        for (Slider slider : areaSliders) slider.setEnabled(!nativeMode);
+        showFacing(!nativeMode);
+        holdSlider.setEnabled(!nativeMode);
         lockedSwitch.setEnabled(BarService.power(this)); // Sub-option of the power switch; the policy also requires power on.
         int log = BarService.logState();
         String visibility = null, taskbar = null; // null: unreadable (e.g. SecurityException), never assumed shown or taskbar on
@@ -919,6 +1137,7 @@ public final class SetupActivity extends Activity {
             doubleSwitch.setChecked(BarService.doublePress(this));
         } finally { syncing = false; }
         BarService.releaseOrphanedPowerKeys(this);
+        showTuning();
         BarService.refreshConfiguration(); refresh(); applyRecentVisibility();
         status.postDelayed(this::refresh, 300);
         BarService.showPreview(areaSwitch.isChecked());

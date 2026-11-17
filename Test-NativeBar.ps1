@@ -77,8 +77,81 @@ public final class LogTriggerHarness {
         String gsa = "com.google.android.googlequicksearchbox", killTag = "UserAwareMgr";
         String killed = "process killed: {pkgName='" + gsa + "', serviceName='', procName=" + gsa + ":interactor, pid=30058, uid=10371, appId=0, owner='null', flags='fg1', renderTid=0, hwuiTids=null, glTids=null, threadInfos=null, mVideoActivityList=[], mStates=0}";
         check(kind(system(I, killTag, killed)) == LogTrigger.GOOGLE_DIED, "Observed Google :interactor kill is GOOGLE_DIED");
-        check(kind(system(I, killTag, killed.replace(":interactor", ":search"))) == LogTrigger.NONE, "Other Google processes are ignored");
-        check(kind(system(I, killTag, killed.replace("pkgName='" + gsa, "pkgName='com.example.app"))) == LogTrigger.NONE, "Another package naming the interactor is ignored");
+        check(kind(system(I, killTag, killed.replace(":interactor", ":search"))) == LogTrigger.ANY_KILL, "Other Google processes are only ANY_KILL");
+        check(kind(system(I, killTag, killed.replace("pkgName='" + gsa, "pkgName='com.example.app"))) == LogTrigger.ANY_KILL, "Another package naming the interactor is never GOOGLE_DIED");
+        String other = "process killed: {pkgName='com.coloros.weather2', serviceName='', procName=com.coloros.weather2, pid=1, uid=10200, appId=0}";
+        check(kind(system(I, killTag, other)) == LogTrigger.ANY_KILL, "Observed sweep kill of another app is ANY_KILL");
+        check(kind(system(W, killTag, other)) == LogTrigger.NONE && kind(entry(3, APP, TIME, I, killTag, other)) == LogTrigger.NONE
+            && kind(entry(0, 1000, TIME, I, killTag, other)) == LogTrigger.NONE, "ANY_KILL keeps the INFO, writer and buffer rules");
+        check(kind(system(I, killTag, "process killed: {pkgName='', procName=x, ")) == LogTrigger.NONE
+            && kind(system(I, killTag, "handleProcessKilled, pkgName: com.coloros.weather2, pid: 1")) == LogTrigger.NONE
+            && kind(system(I, killTag, other + " procName=y")) == LogTrigger.NONE, "Other UserAwareMgr lines and malformed kills are not ANY_KILL");
+        LogTrigger.Gate sweep = new LogTrigger.Gate(TIME);
+        check(sweep.accept(LogTrigger.ANY_KILL, TIME, TIME + 1) && sweep.accept(LogTrigger.ANY_KILL, TIME + 3, TIME + 4)
+            && sweep.accept(LogTrigger.ANY_KILL, TIME + 3, TIME + 5), "Every kill of a sweep is delivered (no debounce)");
+        check(sweep.check(LogTrigger.ANY_KILL, TIME - 1, TIME) == LogTrigger.BEFORE_SESSION && sweep.check(LogTrigger.ANY_KILL, TIME, TIME + 1501) == LogTrigger.STALE,
+            "ANY_KILL keeps the freshness rules");
+
+        // Adjustable touch area (0.3.5): defaults are the 0.3.4 area, every value stays on screen (dp).
+        int[] areaBase = TouchArea.area(TouchArea.X, TouchArea.BOTTOM, TouchArea.WIDTH, TouchArea.HEIGHT, 755, 1133);
+        check(areaBase[0] == 0 && areaBase[1] == 0 && areaBase[2] == 200 && areaBase[3] == 38, "Default area is the 0.3.4 bottom-centre 200x38");
+        int[] areaWide = TouchArea.area(500, 0, 5000, 38, 755, 1133);
+        check(areaWide[2] == 755 && areaWide[0] == 0, "Too wide: full width, no room to move sideways");
+        int[] areaRight = TouchArea.area(9999, 9999, 200, 9999, 755, 1133);
+        check(areaRight[0] == (755 - 200) / 2 && areaRight[3] == TouchArea.MAX_HEIGHT && areaRight[1] == TouchArea.MAX_BOTTOM, "Far right/up/tall is clamped to the edge and limits");
+        int[] areaLeft = TouchArea.area(-9999, -5, 1, 1, 755, 1133);
+        check(areaLeft[2] == TouchArea.MIN_WIDTH && areaLeft[3] == TouchArea.MIN_HEIGHT && areaLeft[0] == -(755 - TouchArea.MIN_WIDTH) / 2 && areaLeft[1] == 0, "Too small/left/low is clamped");
+        int[] areaTiny = TouchArea.area(0, 300, 200, 38, 100, 50);
+        check(areaTiny[2] == 100 && areaTiny[0] == 0 && areaTiny[1] + areaTiny[3] <= 50 + TouchArea.MIN_HEIGHT, "A tiny screen still yields an on-screen area");
+        for (int x = -500; x <= 500; x += 37)
+            for (int w = 0; w <= 900; w += 53) {
+                int[] a = TouchArea.area(x, 0, w, 38, 755, 1133);
+                check(Math.abs(a[0]) + a[2] / 2 <= 755 / 2 + 1, "Area stays within the screen width: x=" + x + " w=" + w);
+            }
+        // Typed values (settings dialog): ASCII digits only, '-' only when signed, bounded length; range is checked by the caller.
+        check(TouchArea.typed("120", false) == 120 && TouchArea.typed(" 38 ", false) == 38 && TouchArea.typed("0", true) == 0, "Plain numbers parse");
+        check(TouchArea.typed("-40", true) == -40 && TouchArea.typed("-40", false) == null, "Minus only where negative values exist");
+        for (String bad : new String[]{null, "", " ", "-", "--1", "+5", "1.5", "1,5", "1e3", "0x10", "12 3", "123456", "-12345", "9-", "١٢٣", "１２", "²", "12\u0000", "NaN"})
+            check(TouchArea.typed(bad, true) == null, "Rejected input: " + (bad == null ? "null" : bad.codePoints().mapToObj(Integer::toHexString).toList()));
+        check(TouchArea.typed("99999", false) == 99999 && TouchArea.typed("-9999", true) == -9999, "Longest allowed input parses without overflow");
+        check(TouchArea.MAX_TYPED == 5 && String.valueOf(-1133).length() <= TouchArea.MAX_TYPED, "Every in-range value fits the length limit");
+        check(TouchArea.hold(50) == TouchArea.MIN_HOLD && TouchArea.hold(5000) == TouchArea.MAX_HOLD && TouchArea.hold(420) == 420, "Hold time is bounded");
+        check(TouchArea.settle(-1) == 0 && TouchArea.settle(99999) == TouchArea.MAX_SETTLE, "Gemini wait is bounded");
+        check(TouchArea.taskbar("1", "3") && TouchArea.taskbar("1", null), "Gesture bar with the taskbar on: wide default");
+        check(!TouchArea.taskbar("1", "0") && !TouchArea.taskbar("0", "3") && !TouchArea.taskbar(null, "3") && !TouchArea.taskbar("true", "3"), "3-button, taskbar off or unreadable: narrow default");
+        check(TouchArea.fallback("width", true, false) == 240 && TouchArea.fallback("width", true, true) == 330
+            && TouchArea.fallback("width", false, false) == 200 && TouchArea.fallback("width", false, true) == 200, "Default widths");
+        for (String field : new String[]{"x", "bottom", "height"})
+            for (boolean land : new boolean[]{false, true})
+                check(TouchArea.fallback(field, true, land) == TouchArea.fallback(field, false, !land), "Taskbar and orientation change only the width: " + field);
+        check(TouchArea.area(0, 0, TouchArea.TASKBAR_WIDTH, TouchArea.HEIGHT, 755, 1133)[2] == 240 && TouchArea.area(0, 0, TouchArea.TASKBAR_WIDTH_LAND, TouchArea.HEIGHT, 1133, 755)[2] == 330, "Wide defaults fit their orientation");
+        check(!TouchArea.key(true, "x").equals(TouchArea.key(false, "x")), "Portrait and landscape are stored separately");
+        for (String field : TouchArea.FIELDS) check(TouchArea.key(false, field).startsWith("area_port_"), "Area key shape: " + field);
+
+        // Warm-up timing (device: Google kill late in the sweep, last kill within 14 ms, gaps up to 52 ms).
+        LogTrigger.Warm warm = new LogTrigger.Warm();
+        long w0 = 100000;
+        check(warm.anyKill(w0) == -1, "Kills before a Google kill do not schedule anything");
+        check(warm.googleDied(w0) == w0 + LogTrigger.WARM_QUIET, "Google kill: warm after the quiet time");
+        check(warm.anyKill(w0 + 14) == w0 + 14 + LogTrigger.WARM_QUIET, "A later sweep kill restarts the quiet time");
+        check(warm.anyKill(w0 + 400) == w0 + LogTrigger.WARM_MAX, "Kills that keep coming never push past the deadline");
+        check(warm.googleDied(w0 + 420) == w0 + LogTrigger.WARM_MAX, "A second Google kill while waiting keeps the first deadline");
+        warm.warmed(w0 + 500);
+        check(warm.anyKill(w0 + 510) == -1, "After warming, kills are ignored again");
+        check(warm.googleDied(w0 + 900) == w0 + 900 + LogTrigger.WARM_QUIET, "One re-kill right after warming is warmed again");
+        warm.warmed(w0 + 1050);
+        check(warm.googleDied(w0 + 1500) == -1, "A further re-kill inside the interval is not (no warm loop)");
+        check(warm.googleDied(w0 + 1050 + LogTrigger.WARM_INTERVAL) == w0 + 1050 + LogTrigger.WARM_INTERVAL + LogTrigger.WARM_QUIET, "After the interval, warming is normal again");
+        warm.warmed(w0 + 5000);
+        check(warm.googleDied(w0 + 5100) > 0, "The one retry is available again after a normal warm-up");
+        LogTrigger.Warm skipped = new LogTrigger.Warm();
+        skipped.googleDied(w0); skipped.cancel();
+        check(skipped.anyKill(w0 + 10) == -1 && skipped.googleDied(w0 + 20) == w0 + 20 + LogTrigger.WARM_QUIET, "A skipped warm-up neither waits nor rate-limits");
+        // Reader-side kill filter: only kills that can still move a waiting warm-up reach the main thread.
+        check(!LogTrigger.killUseful(w0, -1), "No Google kill yet: other kills are dropped");
+        check(LogTrigger.killUseful(w0 + 14, w0) && LogTrigger.killUseful(w0 + LogTrigger.WARM_MAX, w0), "Kills inside the warm-up window are delivered");
+        check(!LogTrigger.killUseful(w0 + LogTrigger.WARM_MAX + 1, w0) && !LogTrigger.killUseful(w0 - 1, w0), "Kills outside the window (later, or before the Google kill) are dropped");
+        check(LogTrigger.WARM_QUIET > 2 * 52 && LogTrigger.WARM_QUIET < LogTrigger.WARM_MAX, "Quiet time covers twice the largest observed gap and stays under the old fixed wait");
         check(kind(system(I, killTag, killed + " procName=x")) == LogTrigger.NONE, "A second procName is rejected");
         check(kind(system(W, killTag, killed)) == LogTrigger.NONE, "Kill line must be INFO");
         check(kind(system(I, killTag + "X", killed)) == LogTrigger.NONE, "Kill tag suffixes cannot match");
@@ -444,7 +517,7 @@ public final class LogTriggerHarness {
     [IO.File]::WriteAllText($harness,$source,(New-Object Text.UTF8Encoding($false)))
     $policy = Join-Path $PSScriptRoot 'micts/fast-launch/LogTrigger.java'
     $status = Join-Path $PSScriptRoot 'micts/fast-launch/StatusPolicy.java'
-    & javac.exe --release 17 -encoding UTF-8 -d $folder $policy $status $harness
+    & javac.exe --release 17 -encoding UTF-8 -d $folder $policy $status (Join-Path $PSScriptRoot 'micts/fast-launch/TouchArea.java') $harness
     if ($LASTEXITCODE) { throw 'Log trigger test compilation failed' }
     & java.exe -cp $folder dev.padhelper.fastcts.LogTriggerHarness
     if ($LASTEXITCODE) { throw 'Log trigger regression failed' }

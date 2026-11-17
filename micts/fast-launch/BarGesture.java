@@ -7,7 +7,6 @@ import android.util.Log;
 
 /** Avoids the OEM bar shortcut competing with the app's own touch area. */
 final class BarGesture {
-    static final int HOLD_MS = 350;
     static final String GESTURE_KEY = "oplus_gesture_handle_cui_enable";
     /**
      * 3-button navigation: ColorOS "long-press home for Breeno" (device: 1 by default; at 0 the long press logs no Breeno
@@ -75,7 +74,7 @@ final class BarGesture {
         }
     }
 
-    static boolean releaseShouldTrigger(long heldMillis, boolean moved, boolean alreadyFired) {
-        return heldMillis >= HOLD_MS && !moved && !alreadyFired;
+    static boolean releaseShouldTrigger(long heldMillis, long holdMillis, boolean moved, boolean alreadyFired) {
+        return heldMillis >= holdMillis && !moved && !alreadyFired;
     }
 }

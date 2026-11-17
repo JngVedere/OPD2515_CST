@@ -32,10 +32,13 @@ public final class RecoveryHarness {
             check(BootRecovery.shouldRecover((bits & 1) != 0, (bits & 2) != 0,
                 (bits & 4) != 0, (bits & 8) != 0, (bits & 16) != 0, (bits & 32) != 0) == (bits == 63));
         }
-        check(BarGesture.releaseShouldTrigger(350, false, false));
-        check(!BarGesture.releaseShouldTrigger(349, false, false));
-        check(!BarGesture.releaseShouldTrigger(1000, true, false));
-        check(!BarGesture.releaseShouldTrigger(1000, false, true));
+        check(BarGesture.releaseShouldTrigger(350, 350, false, false));
+        check(!BarGesture.releaseShouldTrigger(349, 350, false, false));
+        check(!BarGesture.releaseShouldTrigger(1000, 350, true, false));
+        check(!BarGesture.releaseShouldTrigger(1000, 350, false, true));
+        check(BarGesture.releaseShouldTrigger(200, 200, false, false) && !BarGesture.releaseShouldTrigger(999, 1000, false, false)); // user hold time
+        check(VoiceRepair.UNBOUND_MS + TouchArea.MAX_SETTLE + 1000 < LogTrigger.POWER_LAUNCH_AGE); // longest wait still reaches Gemini
+        check(VoiceRepair.SETTLE_MS == 15 && TouchArea.HOLD == 275); // 0.3.5 defaults (user decision)
         check(BootRecovery.autoStartMissed(32, 31, 1000, 2000));   // captured last boot only: auto-start blocked
         check(!BootRecovery.autoStartMissed(32, 32, 1000, 2000));  // captured this boot
         check(!BootRecovery.autoStartMissed(32, -2, 3000, 2000));  // installed after this boot: unknown, no warning
@@ -575,6 +578,15 @@ public final class StateHarness {
         // Only positive outcomes may go on to Gemini (the former true results); every refusal stays closed.
         for (int outcome : new int[]{VoiceRepair.REBOUND,VoiceRepair.NO_WSS,VoiceRepair.NOT_GOOGLE}) check(VoiceRepair.ready(outcome),"Rebind outcome "+outcome+" may request Gemini");
         for (int outcome : new int[]{VoiceRepair.BUSY,VoiceRepair.RESTORE_PENDING,VoiceRepair.NOT_RESTORED,VoiceRepair.INTERRUPTED,VoiceRepair.ERROR}) check(!VoiceRepair.ready(outcome) && !VoiceRepair.describe(outcome).isEmpty(),"Rebind outcome "+outcome+" never requests Gemini");
+        // User-set Gemini wait (0.3.5): the press waits the stored value, clamped.
+        Context tuned = new Context(); tuned.permission = 0;
+        bar(tuned).edit().putInt(TouchArea.SETTLE_KEY, 5000).commit();
+        check(VoiceRepair.settle(tuned) == TouchArea.MAX_SETTLE, "Stored Gemini wait is clamped to its maximum");
+        bar(tuned).edit().putInt(TouchArea.SETTLE_KEY, -7).commit();
+        check(VoiceRepair.settle(tuned) == 0, "Negative Gemini wait is clamped to zero");
+        check(VoiceRepair.settle(new Context()) == TouchArea.SETTLE, "No stored value uses the default wait");
+        bar(tuned).edit().putInt(TouchArea.SETTLE_KEY, 30).commit();
+        check(VoiceRepair.settle(tuned) == 30, "A stored wait wins over the default");
         // 3-button home key: managed with the gesture key in native mode, own journal, untouched when absent or by touch mode.
         Context homeKeys = new Context();
         homeKeys.secure.put(BarGesture.GESTURE_KEY,"0"); homeKeys.secure.put(BarGesture.HOME_KEY,"0");
@@ -640,6 +652,7 @@ $stateSources += Join-Path $PSScriptRoot 'micts/fast-launch/BootRecovery.java'
 $stateSources += Join-Path $PSScriptRoot 'micts/fast-launch/BarGesture.java'
 $stateSources += Join-Path $PSScriptRoot 'micts/fast-launch/VoiceRepair.java'
 $stateSources += Join-Path $PSScriptRoot 'micts/fast-launch/PowerButton.java'
+$stateSources += Join-Path $PSScriptRoot 'micts/fast-launch/TouchArea.java'
 $stateClasses = Join-Path $stateFolder 'classes'
 & javac.exe --release 17 -encoding UTF-8 -d $stateClasses @stateSources
 if ($LASTEXITCODE) { throw 'Stateful Android test compilation failed' }
@@ -851,6 +864,8 @@ $securityChecks++
 # Accessibility events stay fully unsubscribed: no window events, packages or flags, and no event handling.
 if ($barService -match 'TYPE_WINDOW_|TYPE_VIEW_|com\.heytap\.speechassist|com\.coloros\.colordirectservice|FLAG_RETRIEVE_INTERACTIVE_WINDOWS|FLAG_REPORT_VIEW_IDS|FLAG_REQUEST_' -or
     $barService -notmatch 'info\.eventTypes = 0;\s*info\.packageNames = null;\s*info\.flags = 0;\s*setServiceInfo\(info\);' -or
+    $barService -notmatch 'if \(info\.eventTypes != 0 \|\| info\.packageNames != null \|\| info\.flags != 0\) \{\s*info\.eventTypes = 0;' -or
+    ([regex]::Matches($barService, 'setServiceInfo\(')).Count -ne 1 -or
     ([regex]::Matches($barService, '\.eventTypes\s*=')).Count -ne 1 -or ([regex]::Matches($barService, '\.packageNames\s*=')).Count -ne 1 -or
     ([regex]::Matches($barService, 'info\.flags\s*=')).Count -ne 1 -or
     $barService -notmatch 'public void onAccessibilityEvent\(AccessibilityEvent event\) \{ \}') {
