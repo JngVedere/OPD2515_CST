@@ -23,13 +23,14 @@ public final class SetupActivity extends Activity {
     /** ColorOS taskbar switch (system table, 1 on); read only, never written. */
     private static final String TASKBAR = "enable_launcher_taskbar";
     private static final int ERROR_COLOR = 0xFFD93025;
-    private TextView status, logStatus, powerStatus, recentStatus, targetLabel;
+    private TextView status, logStatus, powerStatus, doubleStatus, recentStatus, targetLabel, doubleLabel;
     private int secondary;
-    private LinearLayout body, warnings;
+    private LinearLayout body, warnings, updateBanner, statusCard;
+    private Switch autoUpdateSwitch;
     /** Where text/toggle/button add views: body, or the current settings card opened by section(). */
     private LinearLayout section;
     private SharedPreferences preferences;
-    private Switch areaSwitch, recentSwitch, bootSwitch, powerSwitch, lockedSwitch;
+    private Switch areaSwitch, recentSwitch, bootSwitch, powerSwitch, lockedSwitch, doubleSwitch;
     private RadioGroup modeGroup;
     private int touchId, colorId;
     private boolean waitingAccessibility;
@@ -70,6 +71,19 @@ public final class SetupActivity extends Activity {
         android.content.res.TypedArray colors = obtainStyledAttributes(new int[]{android.R.attr.textColorSecondary});
         secondary = colors.getColor(0, 0xFF808080);
         colors.recycle();
+        // Update banner: filled only when the automatic check on open finds a newer version.
+        updateBanner = new LinearLayout(this);
+        updateBanner.setOrientation(LinearLayout.VERTICAL);
+        android.graphics.drawable.GradientDrawable green = new android.graphics.drawable.GradientDrawable();
+        green.setColor(0x2622C55E); // Translucent green reads on both light and dark backgrounds.
+        green.setStroke(dp(1), UPDATE_COLOR);
+        green.setCornerRadius(dp(12));
+        updateBanner.setBackground(green);
+        updateBanner.setPadding(dp(16), dp(10), dp(8), dp(4));
+        updateBanner.setVisibility(android.view.View.GONE);
+        LinearLayout.LayoutParams bannerParams = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        bannerParams.topMargin = dp(8);
+        body.addView(updateBanner, bannerParams);
         // Warning card: only the missing prerequisites, each row opens where it is fixed. Hidden when nothing is missing.
         warnings = new LinearLayout(this);
         warnings.setOrientation(LinearLayout.VERTICAL);
@@ -85,9 +99,12 @@ public final class SetupActivity extends Activity {
         LinearLayout card = card();
         card.setPadding(dp(16), dp(2), dp(16), dp(2));
         card.setOnClickListener(v -> showAttempts());
-        status = cardRow(card, false);
-        logStatus = cardRow(card, true);
+        // Display order; refresh() hides the rows of features that are off (and their dividers).
+        statusCard = card;
+        logStatus = cardRow(card, false);
+        status = cardRow(card, true);
         powerStatus = cardRow(card, true);
+        doubleStatus = cardRow(card, true);
         recentStatus = cardRow(card, true);
         LinearLayout.LayoutParams cardParams = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         cardParams.topMargin = dp(8); cardParams.bottomMargin = dp(12);
@@ -109,7 +126,8 @@ public final class SetupActivity extends Activity {
             if (selected == colorId && BarService.enabled(this)) approveIfNeeded();
             refresh();
         });
-        text("하단 영역 인식은 투명한 터치 영역을 씁니다. ColorOS 기본 하단 바는 시스템 애니메이션을 그대로 쓰고, 기기 로그로 길게 누르기를 감지합니다.\n앱을 삭제하기 전에는 '끄기'를 먼저 눌러 원래 제스처 설정을 복구해주세요.", 14);
+        text("하단 영역 인식은 투명한 터치 영역을 씁니다. ColorOS 기본 하단 바는 시스템 애니메이션을 그대로 쓰고, 기기 로그로 길게 누르기를 감지합니다. 3버튼 탐색에서는 홈 버튼을 길게 누르면 됩니다.\n"
+            + "3버튼 탐색에서 하단 영역 인식을 쓰면 홈 화면의 최근 앱 버튼을 영역이 가릴 수 있습니다.\n앱을 삭제하기 전에는 '끄기'를 먼저 눌러 원래 제스처 설정을 복구해주세요.", 14);
 
         section("전원 버튼");
         powerSwitch = toggle("전원 버튼 길게 눌러 Gemini Assistant 열기", BarService.power(this), (view, checked) -> {
@@ -190,12 +208,72 @@ public final class SetupActivity extends Activity {
         button("설정 닫기", () -> { applyRecentVisibility(); moveTaskToBack(true); });
 
         section("업데이트");
+        autoUpdateSwitch = toggle("설정을 열 때 업데이트 자동 확인", preferences.getBoolean(UPDATE_AUTO, true),
+            (view, checked) -> preferences.edit().putBoolean(UPDATE_AUTO, checked).apply());
+        text("이 설정 화면을 열 때마다 한 번 GitHub에서 새 버전을 확인하고, 있으면 화면 맨 위에 알려줍니다. 새 버전이 없거나 확인에 실패하면 아무것도 표시하지 않습니다.", 14);
+        divider(section);
         toggle("베타 버전도 확인", preferences.getBoolean(UPDATE_BETA, false),
             (view, checked) -> preferences.edit().putBoolean(UPDATE_BETA, checked).apply());
         text("켜면 정식 버전보다 먼저 나오는 베타 버전도 업데이트로 알려줍니다. 새 기능을 먼저 써볼 수 있지만, 아직 검증 중이라 오류가 있을 수 있습니다.\n끄면 정식 버전만 확인합니다. 베타를 설치한 뒤 끄면, 더 높은 정식 버전이 나올 때 그 버전으로 업데이트됩니다.", 14);
         divider(section);
         button("업데이트 확인", this::checkUpdate);
-        text("누를 때만 GitHub에서 새 버전을 확인하며, 기기 정보는 보내지 않습니다. 새 버전은 파일 검증 후 Android 설치 화면으로 설치합니다.\n처음 한 번은 '출처를 알 수 없는 앱 설치' 허용이 필요하고, 업데이트 후에는 기기 로그 승인을 다시 해야 합니다.", 14);
+        text("GitHub에서 새 버전 정보만 받아오며, 기기 정보는 보내지 않습니다. 새 버전은 파일 검증 후 Android 설치 화면으로 설치합니다.\n처음 한 번은 '출처를 알 수 없는 앱 설치' 허용이 필요하고, 업데이트 후에는 기기 로그 승인을 다시 해야 합니다.", 14);
+        section("고급");
+        // Experimental: changes system power-key settings. Red outline so the risk is visible before reading anything.
+        LinearLayout experimental = new LinearLayout(this);
+        experimental.setOrientation(LinearLayout.VERTICAL);
+        android.graphics.drawable.GradientDrawable danger = new android.graphics.drawable.GradientDrawable();
+        danger.setColor(0x14D93025); // Faint red fill reads on both light and dark backgrounds.
+        danger.setStroke(dp(2), ERROR_COLOR);
+        danger.setCornerRadius(dp(10));
+        experimental.setBackground(danger);
+        experimental.setPadding(dp(14), 0, dp(14), dp(8));
+        LinearLayout.LayoutParams experimentalParams = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        experimentalParams.topMargin = dp(4); experimentalParams.bottomMargin = dp(8);
+        section.addView(experimental, experimentalParams);
+        // Collapsed on every open; the status card still shows whether the double press is on.
+        // Title row: section title as is on the left, the expand/collapse label at the right end; the whole row toggles.
+        TextView advancedTitle = (TextView) section.getChildAt(0);
+        section.removeView(advancedTitle);
+        LinearLayout advancedRow = new LinearLayout(this);
+        advancedRow.setGravity(android.view.Gravity.CENTER_VERTICAL);
+        advancedRow.setMinimumHeight(dp(48));
+        advancedRow.addView(advancedTitle, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        TextView advancedToggle = phrase(new TextView(this));
+        advancedToggle.setTextSize(14); advancedToggle.setTextColor(secondary);
+        advancedToggle.setPadding(dp(12), dp(14), 0, dp(4)); // Same vertical padding as the title, so both share a baseline.
+        advancedRow.addView(advancedToggle);
+        section.addView(advancedRow, 0, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        Runnable showAdvanced = () -> advancedToggle.setText(
+            experimental.getVisibility() == android.view.View.VISIBLE ? "접기 ▴" : "펼치기 ▾");
+        experimental.setVisibility(android.view.View.GONE);
+        showAdvanced.run();
+        advancedRow.setOnClickListener(v -> {
+            experimental.setVisibility(experimental.getVisibility() == android.view.View.VISIBLE ? android.view.View.GONE : android.view.View.VISIBLE);
+            showAdvanced.run();
+        });
+        section = experimental;
+        TextView experimentalTitle = text("⚠ 실험적 기능", 18);
+        experimentalTitle.setTypeface(null, android.graphics.Typeface.BOLD);
+        experimentalTitle.setTextColor(ERROR_COLOR);
+        experimentalTitle.setPadding(0, dp(12), 0, dp(2));
+        text("시스템 설정을 바꾸는 위험할 수 있는 기능입니다. 주의사항을 끝까지 읽은 뒤에만 켜주세요.", 14);
+        divider(section);
+        doubleSwitch = toggle("전원 버튼 두 번 눌러 앱 실행", BarService.doublePress(this), (view, checked) -> {
+            if (syncing) return;
+            if (!checked) { BarService.setDoublePress(this, false); refresh(); return; }
+            setSynced(doubleSwitch, false); // On only after the risks are accepted below.
+            if (!BootRecovery.permitted(this) || !BarService.logsPermitted(this)) {
+                Toast.makeText(this, "보안 설정 쓰기와 기기 로그 권한이 필요합니다. 최초 ADB 설정 안내를 확인해주세요.", Toast.LENGTH_LONG).show();
+                return;
+            }
+            doubleRisks(true);
+        });
+        doubleLabel = text("", 16);
+        button("두 번 누르면 열 앱 선택", () -> chooseApp(true));
+        text("켜면 전원 버튼을 한 번 눌렀을 때 시스템 대신 이 앱이 화면을 끕니다. 그래서 화면이 꺼지기까지 약 0.3초 늦어지고, 앱이 멈추면 잠시 전원 버튼으로 화면이 꺼지지 않을 수 있습니다.\n"
+            + "앱을 삭제하기 전에는 반드시 먼저 꺼주세요. 실행할 앱이 '아무것도 하지 않기'이면 전원 버튼은 원래대로 동작합니다.", 14);
+        button("두 번 누르기 주의사항과 복구 방법", () -> doubleRisks(false));
         section = body; // Footer sits below the cards.
         text("상태 알림 없이 실행됩니다. 선택한 방식으로 연결 앱을 엽니다. 화면 내용 읽기와 캡처는 사용하지 않습니다.", 14)
             .setPadding(0, dp(16), 0, dp(9));
@@ -204,16 +282,21 @@ public final class SetupActivity extends Activity {
         } catch (android.content.pm.PackageManager.NameNotFoundException unavailable) {
             text("버전 정보 없음", 14);
         }
+        if (preferences.getBoolean(UPDATE_AUTO, true)) checkUpdate(true);
     }
 
     /** Main thread only: one check or download at a time. */
     private boolean updating;
-    private static final String UPDATE_BETA = "update_beta";
+    private static final String UPDATE_BETA = "update_beta", UPDATE_AUTO = "update_auto";
+    private static final int UPDATE_COLOR = 0xFF16A34A;
 
-    private void checkUpdate() {
-        if (updating) { Toast.makeText(this, "이미 업데이트를 확인하는 중입니다.", Toast.LENGTH_SHORT).show(); return; }
+    private void checkUpdate() { checkUpdate(false); }
+
+    /** auto: the once-per-open check; silent unless a newer version exists, which shows the top banner instead of a dialog. */
+    private void checkUpdate(boolean auto) {
+        if (updating) { if (!auto) Toast.makeText(this, "이미 업데이트를 확인하는 중입니다.", Toast.LENGTH_SHORT).show(); return; }
         updating = true;
-        Toast.makeText(this, "최신 버전을 확인하는 중입니다.", Toast.LENGTH_SHORT).show();
+        if (!auto) Toast.makeText(this, "최신 버전을 확인하는 중입니다.", Toast.LENGTH_SHORT).show();
         Context app = getApplicationContext();
         boolean beta = preferences.getBoolean(UPDATE_BETA, false);
         new Thread(() -> {
@@ -225,6 +308,7 @@ public final class SetupActivity extends Activity {
             runOnUiThread(() -> {
                 updating = false;
                 if (isFinishing() || isDestroyed()) return;
+                if (auto) { if (failure == null && release != null) showUpdateBanner(release); return; }
                 if (failure != null) Toast.makeText(this, "업데이트 정보를 가져오지 못했습니다 (" + failure + "). 인터넷 연결을 확인해주세요.", Toast.LENGTH_LONG).show();
                 else if (release == null) Toast.makeText(this, "최신 버전입니다.", Toast.LENGTH_SHORT).show();
                 else showPhrased(new AlertDialog.Builder(this).setTitle((release.beta ? "새 베타 버전 " : "새 버전 ") + release.version)
@@ -238,6 +322,38 @@ public final class SetupActivity extends Activity {
                     .setNegativeButton("나중에", null));
             });
         }, "PadUpdateCheck").start();
+    }
+
+    private void showUpdateBanner(AppUpdate.Release release) {
+        updateBanner.removeAllViews();
+        TextView message = phrase(new TextView(this));
+        SpannableStringBuilder text = new SpannableStringBuilder();
+        span(text, (release.beta ? "새 베타 업데이트가 있습니다 · " : "새로운 업데이트가 있습니다 · ") + release.version,
+            new AbsoluteSizeSpan(16, true), new StyleSpan(android.graphics.Typeface.BOLD), new ForegroundColorSpan(UPDATE_COLOR));
+        span(text, "\n" + (release.beta ? "베타 버전은 오류가 있을 수 있습니다. " : "") + "설치 후 앱이 다시 시작되며 기기 로그 승인을 다시 해야 합니다.",
+            new AbsoluteSizeSpan(14, true), new ForegroundColorSpan(secondary));
+        message.setText(text);
+        message.setLineSpacing(dp(2), 1f);
+        updateBanner.addView(message);
+        LinearLayout actions = new LinearLayout(this);
+        actions.setGravity(android.view.Gravity.END);
+        actions.addView(bannerAction("다시는 알리지 않기", () -> {
+            autoUpdateSwitch.setChecked(false); // Its listener stores the choice; the 업데이트 section can turn it back on.
+            updateBanner.setVisibility(android.view.View.GONE);
+            Toast.makeText(this, "자동 업데이트 알림을 껐습니다. 업데이트 항목에서 다시 켤 수 있습니다.", Toast.LENGTH_LONG).show();
+        }));
+        actions.addView(bannerAction("무시", () -> updateBanner.setVisibility(android.view.View.GONE)));
+        actions.addView(bannerAction("업데이트", () -> { updateBanner.setVisibility(android.view.View.GONE); installUpdate(release); }));
+        updateBanner.addView(actions, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        updateBanner.setVisibility(android.view.View.VISIBLE);
+    }
+
+    private Button bannerAction(String label, Runnable action) {
+        Button view = phrase(new Button(this, null, android.R.attr.borderlessButtonStyle));
+        view.setText(label); view.setAllCaps(false);
+        view.setTextColor(UPDATE_COLOR);
+        view.setOnClickListener(v -> action.run());
+        return view;
     }
 
     private void installUpdate(AppUpdate.Release release) {
@@ -423,7 +539,12 @@ public final class SetupActivity extends Activity {
         }
     }
 
-    private void chooseApp() {
+    private static final String NOTHING = "아무것도 하지 않기 (기본)";
+
+    private void chooseApp() { chooseApp(false); }
+
+    /** twice: the power double-press target. Same app list; "nothing" (null component) first, the default. */
+    private void chooseApp(boolean twice) {
         Map<String, AppChoice> byPackage = new LinkedHashMap<>();
         Intent launcher = new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER);
         for (ResolveInfo info : getPackageManager().queryIntentActivities(launcher, 0)) {
@@ -435,7 +556,8 @@ public final class SetupActivity extends Activity {
         ArrayList<AppChoice> choices = new ArrayList<>(byPackage.values());
         Collator order = Collator.getInstance();
         choices.sort((a, b) -> order.compare(a.label, b.label));
-        choices.add(0, new AppChoice("서클 투 서치 (기본 · 빠른 실행)", ""));
+        choices.add(0, new AppChoice(twice ? "서클 투 서치 (빠른 실행)" : "서클 투 서치 (기본 · 빠른 실행)", ""));
+        if (twice) choices.add(0, new AppChoice(NOTHING, null));
         ArrayAdapter<AppChoice> adapter = new ArrayAdapter<>(this, android.R.layout.simple_list_item_1, choices);
         LinearLayout panel = new LinearLayout(this);
         panel.setOrientation(LinearLayout.VERTICAL);
@@ -446,7 +568,7 @@ public final class SetupActivity extends Activity {
         ListView list = new ListView(this);
         list.setAdapter(adapter);
         panel.addView(list, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(340)));
-        AlertDialog dialog = new AlertDialog.Builder(this).setTitle("연결할 앱 선택")
+        AlertDialog dialog = new AlertDialog.Builder(this).setTitle(twice ? "두 번 누르면 열 앱" : "연결할 앱 선택")
             .setView(panel).setNegativeButton("취소", null).create();
         search.addTextChangedListener(new TextWatcher() {
             @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) { }
@@ -457,9 +579,13 @@ public final class SetupActivity extends Activity {
             AppChoice choice = adapter.getItem(position);
             if (choice == null) return;
             SharedPreferences.Editor edit = preferences.edit();
-            if (choice.component.isEmpty()) edit.remove(MainActivity.TARGET_COMPONENT).remove(MainActivity.TARGET_LABEL);
+            if (twice) {
+                if (choice.component == null) edit.remove(BarService.POWER_DOUBLE_TARGET).remove(BarService.POWER_DOUBLE_LABEL);
+                else edit.putString(BarService.POWER_DOUBLE_TARGET, choice.component).putString(BarService.POWER_DOUBLE_LABEL, choice.label);
+            } else if (choice.component.isEmpty()) edit.remove(MainActivity.TARGET_COMPONENT).remove(MainActivity.TARGET_LABEL);
             else edit.putString(MainActivity.TARGET_COMPONENT, choice.component).putString(MainActivity.TARGET_LABEL, choice.label);
             edit.apply();
+            if (twice) { BarService.refreshConfiguration(); approveIfNeeded(); }
             refresh();
             dialog.dismiss();
         });
@@ -470,6 +596,59 @@ public final class SetupActivity extends Activity {
         final String label, component;
         AppChoice(String label, String component) { this.label = label; this.component = component; }
         @Override public String toString() { return label; }
+    }
+
+    private void setSynced(Switch view, boolean checked) {
+        syncing = true;
+        try { view.setChecked(checked); } finally { syncing = false; }
+    }
+
+    /** consent: the switch asked to turn on; it turns on only through the accept button. */
+    private void doubleRisks(boolean consent) {
+        String restore = "adb shell settings delete global " + PowerButton.SHORT + "\nadb shell settings delete global " + PowerButton.DOUBLE;
+        AlertDialog.Builder builder = new AlertDialog.Builder(this).setTitle("전원 버튼 두 번 누르기 주의사항");
+        LinearLayout panel = new LinearLayout(builder.getContext());
+        panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setPadding(dp(24), dp(8), dp(24), 0);
+        block(panel, "ColorOS에는 전원 버튼 두 번 누르기 기능이 없어, 이 앱이 시스템 전원 버튼 설정 두 개를 바꿔서 만듭니다."
+            + "\n\n• 한 번 누르기: 시스템 동작을 '아무것도 안 함'으로 바꾸고, 이 앱이 접근성으로 화면을 대신 끕니다."
+            + "\n• 두 번 누르기: 시스템이 두 번째 누름을 기다리게 하고, 기기 로그로 감지해 선택한 앱을 엽니다.", false);
+        block(panel, "알아둘 점"
+            + "\n\n1. 두 번째 누름을 기다리느라 화면이 꺼지기까지 약 0.3초 늦어집니다."
+            + "\n\n2. 기기 로그 연결이 끊기거나 접근성이 꺼지면, 앱이 원래 설정으로 자동 복구합니다."
+            + "\n\n3. 앱이 갑자기 종료되면(최근 앱 '모두 닫기', 메모리 정리) 앱이 다시 실행될 때까지 몇 초 동안 전원 버튼으로 화면이 꺼지지 않을 수 있습니다. 최근 앱에서 이 앱 카드를 잠가 두세요."
+            + "\n\n4. 특히 '강제 종료'를 하면 접근성이 꺼진 채 앱이 다시 실행되지 않아, 그동안 전원 버튼으로 화면이 꺼지지 않습니다(화면 자동 꺼짐은 동작). 이 앱 설정 화면을 열거나 빠른 설정 타일이 보이도록 빠른 설정을 내리면 바로 원래대로 돌아갑니다."
+            + "\n\n5. 앱은 잠금이 풀린 화면에서만 엽니다. 꺼진 화면이나 잠금 화면에서 두 번 누르면 화면만 켜진 채로 있습니다."
+            + "\n\n6. 화면 켜기와 길게 눌러 Gemini Assistant 열기는 그대로입니다."
+            + "\n\n7. 재부팅하면 첫 잠금 해제 전에 원래 설정으로 돌아가고, 기기 로그를 승인하면 다시 적용됩니다. 자동 실행이 꺼져 있거나 강제 종료 뒤라면 이 복구가 동작하지 않을 수 있습니다."
+            + "\n\n8. 실행할 앱이 '아무것도 하지 않기'이면 설정을 바꾸지 않아 전원 버튼은 원래대로 동작합니다.", false);
+        block(panel, new SpannableStringBuilder()
+            .append("앱을 삭제하기 전에는 반드시 이 기능을 먼저 끄세요.", new StyleSpan(android.graphics.Typeface.BOLD), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            .append("\n켠 채로 삭제하거나 앱이 계속 실행되지 못하면 전원 버튼으로 화면이 꺼지지 않는 상태가 남을 수 있습니다. 그때는 컴퓨터에서 아래 명령으로 원래대로 되돌리세요."), false);
+        block(panel, restore, true);
+        ScrollView scroll = new ScrollView(builder.getContext());
+        scroll.addView(panel);
+        builder.setView(scroll).setNeutralButton("복구 명령 복사", (dialog, which) -> {
+            getSystemService(android.content.ClipboardManager.class).setPrimaryClip(ClipData.newPlainText("전원 버튼 설정 복구", restore));
+            Toast.makeText(this, "명령을 복사했습니다.", Toast.LENGTH_SHORT).show();
+        });
+        if (consent) builder.setPositiveButton("이해했고 켜기", (dialog, which) -> {
+            BarService.setDoublePress(this, true);
+            setSynced(doubleSwitch, true);
+            approveIfNeeded();
+            if (!BarService.doubleTarget(this)) Toast.makeText(this, "두 번 누르면 열 앱을 선택해야 적용됩니다.", Toast.LENGTH_LONG).show();
+            refresh();
+        }).setNegativeButton("취소", null);
+        else builder.setNegativeButton("닫기", null);
+        builder.show();
+    }
+
+    private String doubleState() {
+        if (!BarService.doublePress(this)) return "꺼짐 · 전원 버튼은 원래대로 동작";
+        if (!BarService.doubleTarget(this)) return "대기 · 열 앱이 '아무것도 하지 않기'라 전원 버튼은 원래대로 동작";
+        if (PowerButton.applied(this)) return "적용됨 · 한 번 누르면 이 앱이 화면을 끄고, 두 번 누르면 선택한 앱을 엽니다";
+        if (!BootRecovery.permitted(this) || !BarService.logsPermitted(this)) return "권한 필요 · 최초 ADB 설정 안내 참고";
+        return "대기 · 기기 로그가 연결되면 적용 · 그 전까지 전원 버튼은 원래대로 동작";
     }
 
     private void begin() {
@@ -637,31 +816,64 @@ public final class SetupActivity extends Activity {
         String visibility = null, taskbar = null; // null: unreadable (e.g. SecurityException), never assumed shown or taskbar on
         try { visibility = Settings.Secure.getString(getContentResolver(), GESTURE_BAR); } catch (RuntimeException unreadable) { }
         try { taskbar = Settings.System.getString(getContentResolver(), TASKBAR); } catch (RuntimeException unreadable) { }
-        int gesture = StatusPolicy.gestureBar(visibility, taskbar);
+        String nav = null;
+        try { nav = Settings.Secure.getString(getContentResolver(), BarGesture.NAV_KEY); } catch (RuntimeException unreadable) { }
+        int gesture = StatusPolicy.gestureBar(visibility, taskbar, nav);
         String state = StatusPolicy.bar(BarService.granted(this), BarService.enabled(this), BarService.serviceRunning(), nativeMode,
             BootRecovery.permitted(this), LogSession.breenoDisabled(this), BarService.logsPermitted(this), log == LogSession.ACTIVE,
             log == LogSession.CONNECTING, BarService.ready(this), MainActivity.cts(preferences.getString(MainActivity.TARGET_COMPONENT, "")),
             BarService.googleVoice(this), gesture);
         long now = System.currentTimeMillis();
-        status.setText(row("하단 실행", state));
+        boolean[] shown = shownPathways();
         logStatus.setText(row("기기 로그", logState()));
+        status.setText(row("하단 실행", state));
         powerStatus.setText(row("전원 버튼", powerState()));
+        doubleStatus.setText(row("전원 버튼 두 번 누르기", doubleState()));
+        showRows(new TextView[]{logStatus, status, powerStatus, doubleStatus, recentStatus},
+            new boolean[]{BarService.logsWanted(this), shown[0], shown[1], shown[2], true});
         SpannableStringBuilder recent = new SpannableStringBuilder();
-        span(recent, "최근 기록 · 눌러서 자세히\n", new AbsoluteSizeSpan(13, true), new ForegroundColorSpan(secondary));
-        recent.append("하단  ").append(StatusPolicy.summary(preferences.getString(BarService.LAST_BAR, null), now))
-            .append("\n전원  ").append(StatusPolicy.summary(preferences.getString(BarService.LAST_POWER, null), now));
+        span(recent, "최근 기록 · 눌러서 자세히", new AbsoluteSizeSpan(13, true), new ForegroundColorSpan(secondary));
+        if (shown[0]) recent.append("\n하단  ").append(StatusPolicy.summary(preferences.getString(BarService.LAST_BAR, null), now));
+        if (shown[1]) recent.append("\n전원  ").append(StatusPolicy.summary(preferences.getString(BarService.LAST_POWER, null), now));
+        if (shown[2]) recent.append("\n두 번  ").append(StatusPolicy.summary(preferences.getString(BarService.LAST_DOUBLE, null), now));
         recentStatus.setText(recent);
         targetLabel.setText(preferences.getString(MainActivity.TARGET_LABEL, "서클 투 서치 (기본 · 빠른 실행)"));
+        doubleLabel.setText("두 번 누르면: " + preferences.getString(BarService.POWER_DOUBLE_LABEL,
+            BarService.doubleTarget(this) ? "서클 투 서치 (빠른 실행)" : NOTHING));
         refreshWarnings();
+    }
+
+    /**
+     * Bottom, power long press, power double press: whether each is turned on. With everything off the bottom row
+     * still shows (as off), so the status card is never empty.
+     */
+    private boolean[] shownPathways() {
+        boolean power = BarService.power(this), twice = BarService.doublePress(this);
+        return new boolean[]{BarService.enabled(this) || !(power || twice), power, twice};
+    }
+
+    /** Shows the given rows of the status card; a divider shows only between two visible rows. */
+    private void showRows(TextView[] rows, boolean[] visible) {
+        boolean above = false;
+        for (int i = 0; i < rows.length; i++) {
+            rows[i].setVisibility(visible[i] ? android.view.View.VISIBLE : android.view.View.GONE);
+            int index = statusCard.indexOfChild(rows[i]);
+            if (index > 0) statusCard.getChildAt(index - 1).setVisibility(above && visible[i] ? android.view.View.VISIBLE : android.view.View.GONE);
+            above |= visible[i];
+        }
     }
 
     /** Read-only: the newest attempt per pathway as recorded locally; never claims a window appeared. */
     private void showAttempts() {
         long now = System.currentTimeMillis();
+        boolean[] shown = shownPathways();
+        StringBuilder records = new StringBuilder();
+        if (shown[0]) records.append("[하단 · 연결 앱]\n").append(StatusPolicy.detail(preferences.getString(BarService.LAST_BAR, null), now)).append("\n\n");
+        if (shown[1]) records.append("[전원 버튼 · Gemini Assistant]\n").append(StatusPolicy.detail(preferences.getString(BarService.LAST_POWER, null), now)).append("\n\n");
+        if (shown[2]) records.append("[전원 버튼 두 번 누르기]\n").append(StatusPolicy.detail(preferences.getString(BarService.LAST_DOUBLE, null), now)).append("\n\n");
         showPhrased(new AlertDialog.Builder(this).setTitle("최근 실행 기록")
-            .setMessage("[하단 · 연결 앱]\n" + StatusPolicy.detail(preferences.getString(BarService.LAST_BAR, null), now)
-                + "\n\n[전원 버튼 · Gemini Assistant]\n" + StatusPolicy.detail(preferences.getString(BarService.LAST_POWER, null), now)
-                + "\n\n경로마다 마지막 1건만 이 기기에 저장하며 외부로 보내지 않습니다. 앱은 실행 요청 전달과 Gemini 요청 수락까지만 확인하며,"
+            .setMessage(records
+                + "경로마다 마지막 1건만 이 기기에 저장하며 외부로 보내지 않습니다. 앱은 실행 요청 전달과 Gemini 요청 수락까지만 확인하며,"
                 + " 서클 투 서치나 Gemini 창이 실제로 떴는지는 확인하지 않습니다. Google 상태는 선택과 설치·사용 여부만 확인하며 실제 연결 상태는 알 수 없습니다."
                 + " 길게 눌렀는데 기록이 바뀌지 않았다면 입력이 감지되지 않았을 수 있으니 기기 로그 연결과 ColorOS 전원 버튼 음성 비서 호출 설정을 확인해보세요.")
             .setPositiveButton("닫기", null));
@@ -704,7 +916,9 @@ public final class SetupActivity extends Activity {
             bootSwitch.setChecked(BootRecovery.wanted(this));
             powerSwitch.setChecked(BarService.power(this));
             lockedSwitch.setChecked(BarService.lockedAssist(this));
+            doubleSwitch.setChecked(BarService.doublePress(this));
         } finally { syncing = false; }
+        BarService.releaseOrphanedPowerKeys(this);
         BarService.refreshConfiguration(); refresh(); applyRecentVisibility();
         status.postDelayed(this::refresh, 300);
         BarService.showPreview(areaSwitch.isChecked());
@@ -718,6 +932,7 @@ public final class SetupActivity extends Activity {
         else registerReceiver(serviceState, filter);
         getContentResolver().registerContentObserver(Settings.Secure.getUriFor(GESTURE_BAR), false, gestureBar);
         getContentResolver().registerContentObserver(Settings.System.getUriFor(TASKBAR), false, gestureBar);
+        getContentResolver().registerContentObserver(Settings.Secure.getUriFor(BarGesture.NAV_KEY), false, gestureBar);
     }
 
     @Override public void onStop() {

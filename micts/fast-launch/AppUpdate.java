@@ -21,7 +21,8 @@ import javax.net.ssl.HttpsURLConnection;
 import org.json.JSONObject;
 
 /**
- * Manual update, only when the user taps "업데이트 확인": reads App-Release.json from the repository's main branch,
+ * Update check from the settings screen only (its "업데이트 확인" button, or once per open while the user keeps the
+ * automatic check on; nothing in the background): reads App-Release.json from the repository's main branch,
  * downloads the matching GitHub release APK, checks its SHA-256 and hands it to PackageInstaller, which shows
  * Android's own confirmation (and rejects a different signing key). The only network use in this app; nothing is sent.
  */

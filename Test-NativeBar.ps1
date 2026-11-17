@@ -18,7 +18,7 @@ public final class LogTriggerHarness {
     private static int checks, failures;
     private static final long TIME = 1763160000000L;
     // LAUNCHER: test fixture for the UID BarService resolves at runtime for the verified com.android.launcher (observed 10156).
-    private static final int SYSTEM_UI = 10160, LAUNCHER = 10156, APP = 10234, V = 2, I = 4, W = 5;
+    private static final int SYSTEM_UI = 10160, LAUNCHER = 10156, APP = 10234, V = 2, D = 3, I = 4, W = 5;
     private static final String POWER_TAG = "KEYLOG_SinglePowerKeyMonitor";
     private static final String POWER_TEXT = "PowerKey:onLongPress, underWaterCameraStatus = false";
     private static final String AM = "ActivityManager";
@@ -90,8 +90,33 @@ public final class LogTriggerHarness {
         check(killGate.accept(LogTrigger.GOOGLE_DIED, TIME, TIME + 1) && !killGate.accept(LogTrigger.GOOGLE_DIED, TIME + 5, TIME + 6)
             && killGate.accept(LogTrigger.POWER, TIME + 5, TIME + 6), "GOOGLE_DIED is debounced on its own, never blocking POWER");
 
+        // Power presses while PowerButton settings are applied (device, OPD2515): double = onMultiPress count:2 on the
+        // monitor tag, followed in the same ms by the press tag's powerPress line, which belongs to the double.
+        String pressTag = "KEYLOG_PhoneWindowManagerExtImpl";
+        String single = "PowerKey: send base.powerPress, beganFromNonInteractive=false downTime=123456789";
+        String twice = "PowerKey: onMultiPress, down time:123456789 count:2";
+        check(kind(system(D, pressTag, single)) == LogTrigger.POWER_SINGLE, "Observed short press is POWER_SINGLE");
+        check(kind(system(V, POWER_TAG, twice)) == LogTrigger.POWER_DOUBLE, "Observed double press is POWER_DOUBLE");
+        check(kind(system(D, pressTag, single.replace("=false", "=true"))) == LogTrigger.NONE, "A press that woke the screen never turns it off");
+        check(kind(system(V, POWER_TAG, twice.replace("count:2", "count:3"))) == LogTrigger.NONE, "Triple presses are ignored");
+        check(kind(system(V, POWER_TAG, twice + " ")) == LogTrigger.NONE && kind(system(D, pressTag, single + "x")) == LogTrigger.NONE, "Press lines must match exactly");
+        check(kind(system(V, pressTag, twice)) == LogTrigger.NONE && kind(system(D, POWER_TAG, single)) == LogTrigger.NONE, "Each press line needs its own tag");
+        check(kind(entry(3, APP, TIME, D, pressTag, single)) == LogTrigger.NONE && kind(entry(3, APP, TIME, V, POWER_TAG, twice)) == LogTrigger.NONE, "Forged press lines are rejected");
+        check(kind(entry(0, 1000, TIME, D, pressTag, single)) == LogTrigger.NONE, "Press lines outside the system buffer are rejected");
+        byte[] press = system(D, pressTag, single);
+        check(LogTrigger.candidate(press, press.length) == LogTrigger.POWER_SINGLE, "Short press is a diagnostic candidate");
+        LogTrigger.Gate pair = new LogTrigger.Gate(TIME);
+        check(pair.accept(LogTrigger.POWER_DOUBLE, TIME, TIME + 1) && !pair.accept(LogTrigger.POWER_SINGLE, TIME, TIME + 1)
+            && pair.accept(LogTrigger.POWER_SINGLE, TIME + 400, TIME + 401), "The double's own powerPress line is dropped, a later short press is not");
+        check(new LogTrigger.Gate(TIME).accept(LogTrigger.POWER_SINGLE, TIME, TIME + 1), "A short press alone is accepted");
+
         check(kind(system(W, AM, breeno(SYSTEM_UI, 0))) == LogTrigger.BAR, "Observed SystemUI failed Breeno start is BAR");
-        check(kind(system(W, AM, breeno(1000, 0))) == LogTrigger.NONE, "The power-key tail with caller 1000 never triggers the bar");
+        check(kind(system(W, AM, breeno(1000, 0))) == LogTrigger.HOME, "Caller 1000 (3-button home long press or power tail) is HOME, never BAR");
+        check(kind(entry(3, APP, TIME, W, AM, breeno(1000, 0))) == LogTrigger.NONE && kind(entry(0, 1000, TIME, W, AM, breeno(1000, 0))) == LogTrigger.NONE,
+            "A forged or non-system-buffer caller-1000 line is rejected");
+        check(kind(system(W, AM, breeno(1000, 10))) == LogTrigger.NONE && kind(system(I, AM, breeno(1000, 0))) == LogTrigger.NONE,
+            "Caller-1000 lines keep the user and priority rules");
+        check(kind(system(W, AM, breeno(999, 0))) == LogTrigger.NONE && kind(system(W, AM, breeno(0, 0))) == LogTrigger.NONE, "Other low callers are rejected");
         check(kind(system(I, AM, breeno(SYSTEM_UI, 0))) == LogTrigger.NONE, "Bar record must be a warning");
         check(kind(system(W, "ActivityTaskManager", breeno(SYSTEM_UI, 0))) == LogTrigger.NONE, "Bar record needs the exact ActivityManager tag");
         check(kind(entry(3, APP, TIME, W, AM, breeno(SYSTEM_UI, 0))) == LogTrigger.NONE, "An app writing a forged ActivityManager line is rejected");
@@ -108,8 +133,8 @@ public final class LogTriggerHarness {
         byte[] taskbarPacket = system(W, AM, breeno(LAUNCHER, 0));
         check(LogTrigger.classify(taskbarPacket, taskbarPacket.length, SYSTEM_UI, -1, 0) == LogTrigger.NONE, "Unresolved/untrusted launcher UID never matches");
         check(LogTrigger.classify(taskbarPacket, taskbarPacket.length, -1, -1, 0) == LogTrigger.NONE, "Nothing resolved: no bar caller matches");
-        for (int caller : new int[]{APP, 10155, 10157, 0, 1000, 2000})
-            check(kind(system(W, AM, breeno(caller, 0))) == LogTrigger.NONE, "Caller UID " + caller + " that is neither SystemUI nor the trusted launcher is rejected");
+        for (int caller : new int[]{APP, 10155, 10157, 0, 2000})
+            check(kind(system(W, AM, breeno(caller, 0))) == LogTrigger.NONE, "Caller UID " + caller + " that is neither SystemUI, the trusted launcher nor system_server (HOME) is rejected");
         for (int writer : new int[]{0, 2000, APP, SYSTEM_UI, LAUNCHER, 1000 + 100000})
             check(kind(entry(3, writer, TIME, W, AM, breeno(LAUNCHER, 0))) == LogTrigger.NONE, "Launcher bar line written by UID " + writer + " is untrusted");
         for (int lid : new int[]{0, 1, 2, 4, 5, 7})
@@ -217,7 +242,7 @@ public final class LogTriggerHarness {
         byte[] amOther = system(W, AM, "Slow operation: 120ms");
         check(LogTrigger.candidate(amOther, amOther.length) == LogTrigger.NONE, "Unrelated ActivityManager lines are not candidates");
         byte[] tailLine = system(W, AM, breeno(1000, 0));
-        check(LogTrigger.candidate(tailLine, tailLine.length) == LogTrigger.BAR && kind(tailLine) == LogTrigger.NONE, "Power tail is a visible BAR candidate but rejected");
+        check(LogTrigger.candidate(tailLine, tailLine.length) == LogTrigger.BAR && kind(tailLine) == LogTrigger.HOME, "Caller-1000 line is a visible candidate classified HOME");
         String described = LogTrigger.describe(power, power.length, LogTrigger.POWER, LogTrigger.POWER, LogTrigger.ACCEPT, TIME + 12);
         check(described.equals("candidate=POWER writer=1000 lid=3 prio=2 hdr=28 age=12ms class=POWER gate=ACCEPT"), "Diagnostics carry header fields and outcomes: " + described);
         String forgedText = LogTrigger.describe(forged, forged.length, LogTrigger.POWER, LogTrigger.NONE, LogTrigger.NOT_TRIGGER, TIME);
@@ -241,6 +266,18 @@ public final class LogTriggerHarness {
             if (k != LogTrigger.NONE && observed.accept(k, LogTrigger.millis(packet), TIME + 600)) accepted++;
         }
         check(accepted == 1, "One physical power long press produces exactly one trigger");
+
+        // 3-button home long press (device): only the caller-1000 Breeno line, no power marker before it.
+        LogTrigger.Gate home = new LogTrigger.Gate(TIME);
+        check(home.accept(LogTrigger.HOME, TIME + 10, TIME + 20), "A home long press alone is accepted");
+        LogTrigger.Gate powerTail = new LogTrigger.Gate(TIME);
+        check(powerTail.accept(LogTrigger.POWER, TIME, TIME + 1) && powerTail.check(LogTrigger.HOME, TIME + 2, TIME + 3) == LogTrigger.DUPLICATE,
+            "The power long press's own Breeno tail is never a home long press");
+        check(!powerTail.accept(LogTrigger.POWER, TIME + 1200, TIME + 1201) && powerTail.check(LogTrigger.HOME, TIME + 1202, TIME + 1203) == LogTrigger.DUPLICATE,
+            "A debounced repeat power press still swallows its tail");
+        check(powerTail.accept(LogTrigger.HOME, TIME + 2300, TIME + 2301), "A home long press over a second after the last power marker is accepted");
+        check(new LogTrigger.Gate(TIME).accept(LogTrigger.HOME, TIME, TIME + 1) && new LogTrigger.Gate(TIME).accept(LogTrigger.BAR, TIME, TIME + 1),
+            "HOME and BAR are separate kinds");
 
         for (int bits = 0; bits < 128; bits++) {
             boolean expected = bits == 0b0010011;
@@ -313,6 +350,14 @@ public final class LogTriggerHarness {
             "Taskbar ON + hidden gesture bar is normal, no hide error: " + taskbarHidden);
         check(StatusPolicy.bar(true, true, true, true, true, true, true, true, false, true, true, OK, StatusPolicy.gestureBar("1", "0")).startsWith("오류 · 제스처 안내 막대 숨기기"),
             "Taskbar OFF + hidden gesture bar keeps the hide error");
+        final int BUTTONS = StatusPolicy.GESTURE_BUTTONS;
+        check(StatusPolicy.gestureBar("1", "0", "0") == BUTTONS && StatusPolicy.gestureBar(null, "1", "0") == BUTTONS, "hide_navigationbar_enable 0 is 3-button navigation");
+        for (String nav : new String[]{null, "", "2", "3", "00"})
+            check(StatusPolicy.gestureBar("0", "0", nav) == StatusPolicy.gestureBar("0", "0"), "Other navigation values keep the gesture rules: " + nav);
+        String buttonsReady = StatusPolicy.bar(true, true, true, true, true, true, true, true, false, true, true, OK, BUTTONS);
+        check(buttonsReady.startsWith("사용 중 · 3버튼 홈 버튼 감지 중") && !buttonsReady.contains("제스처 안내 막대"), "3-button native mode reports the home button: " + buttonsReady);
+        String buttonsTouch = StatusPolicy.bar(true, true, true, false, true, true, true, true, false, true, true, OK, BUTTONS);
+        check(buttonsTouch.contains("최근 앱 버튼") && buttonsTouch.startsWith("사용 중 · 터치 영역"), "3-button touch mode warns about the recents button: " + buttonsTouch);
         check(StatusPolicy.bar(true, true, true, true, true, true, true, true, false, true, true, OK, StatusPolicy.gestureBar(null, null)).contains("제스처 안내 막대 표시 여부 확인 불가"),
             "Unreadable gesture bar and taskbar stay unverified");
         check(StatusPolicy.bar(true, true, true, true, false, true, true, true, false, true, true, OK, TASKBAR).contains("보안 설정 쓰기 권한 필요"),

@@ -8,8 +8,18 @@ import java.util.regex.*;
  * a trigger kind, the writer UID and an entry time. Raw messages are never stored.
  */
 final class LogTrigger {
-    /** GOOGLE_DIED: ColorOS reports the Google assistant interactor process killed (e.g. recents "clear all"). */
-    static final int NONE = 0, BAR = 1, POWER = 2, GOOGLE_DIED = 3;
+    /**
+     * GOOGLE_DIED: ColorOS reports the Google assistant interactor process killed (e.g. recents "clear all").
+     * POWER_SINGLE / POWER_DOUBLE: short and double power presses, seen only while PowerButton settings make ColorOS
+     * wait for a second press (a single press while the screen was off is never POWER_SINGLE).
+     * HOME: the same Breeno start failure as BAR but requested by system_server (caller 1000): 3-button home long press,
+     * and also the power long press's tail, which the Gate drops after a power marker (POWER_TAIL).
+     */
+    static final int NONE = 0, BAR = 1, POWER = 2, GOOGLE_DIED = 3, POWER_SINGLE = 4, POWER_DOUBLE = 5, HOME = 6;
+    /** Device: the power long press logs onLongPress, then its caller-1000 Breeno line 2 ms later. */
+    static final long POWER_TAIL = 1000;
+    /** The double press's own "send base.powerPress" line follows its onMultiPress line in the same millisecond. */
+    static final long DOUBLE_PAIR = 300;
     /** One SOCK_SEQPACKET connection to logd: system buffer only, starting from the newest entry. */
     static final String COMMAND = "stream lids=3 tail=1";
     static final int MAX_PACKET = 5120, SYSTEM_UID = 1000, SYSTEM_LOG = 3;
@@ -26,6 +36,10 @@ final class LogTrigger {
     private static final byte[] KILL_TAG = ascii("UserAwareMgr");
     private static final String KILL_PREFIX = "process killed: {pkgName='com.google.android.googlequicksearchbox', ",
         KILL_PROC = ", procName=com.google.android.googlequicksearchbox:interactor, ";
+    /** Observed OPD2515 (system_server): one line per handled press, after any multi-press wait. */
+    private static final byte[] PRESS_TAG = ascii("KEYLOG_PhoneWindowManagerExtImpl");
+    private static final Pattern SINGLE = Pattern.compile("PowerKey: send base\\.powerPress, beganFromNonInteractive=false downTime=\\d{1,19}"),
+        DOUBLE = Pattern.compile("PowerKey: onMultiPress, down time:\\d{1,19} count:2");
     private static final int INFO = 4, WARN = 5;
     private static final Pattern ORIGIN = Pattern.compile("\\s+mCallingUid=(\\d+)\\s+\\}\\s+U=(\\d+): not found\\s*$");
 
@@ -59,15 +73,21 @@ final class LogTrigger {
         int message = tagEnd + 1, messageEnd = zero(p, message, end);
         if (same(p, tag, tagEnd, POWER_TAG)) {
             int after = message + POWER_TEXT.length;
-            return messageEnd >= after && same(p, message, after, POWER_TEXT)
-                && (after == messageEnd || p[after] == ',') ? POWER : NONE;
+            if (messageEnd >= after && same(p, message, after, POWER_TEXT) && (after == messageEnd || p[after] == ',')) return POWER;
+            return messageEnd - message <= 128
+                && DOUBLE.matcher(new String(p, message, messageEnd - message, StandardCharsets.US_ASCII)).matches() ? POWER_DOUBLE : NONE;
+        }
+        if (same(p, tag, tagEnd, PRESS_TAG)) {
+            return messageEnd - message <= 128
+                && SINGLE.matcher(new String(p, message, messageEnd - message, StandardCharsets.US_ASCII)).matches() ? POWER_SINGLE : NONE;
         }
         if (same(p, tag, tagEnd, KILL_TAG)) {
             if (p[hdr] != INFO || messageEnd - message > 4096) return NONE;
             return googleDied(new String(p, message, messageEnd - message, StandardCharsets.UTF_8)) ? GOOGLE_DIED : NONE;
         }
         if (p[hdr] != WARN || !same(p, tag, tagEnd, BAR_TAG)) return NONE;
-        return bar(new String(p, message, messageEnd - message, StandardCharsets.UTF_8), systemUiUid, launcherUid, user) ? BAR : NONE;
+        int caller = barCaller(new String(p, message, messageEnd - message, StandardCharsets.UTF_8), user);
+        return caller == SYSTEM_UID ? HOME : caller > SYSTEM_UID && (caller == systemUiUid || caller == launcherUid) ? BAR : NONE;
     }
 
     /**
@@ -75,18 +95,23 @@ final class LogTrigger {
      * its taskbar draws the bar (power uses caller 1000). Each UID is resolved by the caller; -1 (unresolved) never matches.
      */
     static boolean bar(String message, int systemUiUid, int launcherUid, int user) {
-        if (message == null || message.length() > 4096 || user < 0) return false;
+        int caller = barCaller(message, user);
+        return caller > SYSTEM_UID && (caller == systemUiUid || caller == launcherUid);
+    }
+
+    /** The calling UID of an exact Breeno start failure for this user, else -1. */
+    static int barCaller(String message, int user) {
+        if (message == null || message.length() > 4096 || user < 0) return -1;
         if (!message.startsWith("Unable to start service Intent { ")
             || !message.contains("act=heytap.intent.action.ACTIVATE_SPEECH_ASSIST ")
-            || !message.contains("cmp=com.heytap.speechassist/.core.SpeechService ")) return false;
+            || !message.contains("cmp=com.heytap.speechassist/.core.SpeechService ")) return -1;
         if (message.indexOf("mCallingUid=") != message.lastIndexOf("mCallingUid=")
-            || message.indexOf(" U=") != message.lastIndexOf(" U=")) return false;
+            || message.indexOf(" U=") != message.lastIndexOf(" U=")) return -1;
         Matcher origin = ORIGIN.matcher(message);
         try {
-            if (!origin.find() || Integer.parseInt(origin.group(2)) != user) return false;
-            int caller = Integer.parseInt(origin.group(1));
-            return caller > SYSTEM_UID && (caller == systemUiUid || caller == launcherUid);
-        } catch (NumberFormatException invalid) { return false; }
+            if (!origin.find() || Integer.parseInt(origin.group(2)) != user) return -1;
+            return Integer.parseInt(origin.group(1));
+        } catch (NumberFormatException invalid) { return -1; }
     }
 
     /** Exactly the Google package's :interactor process (the small-Gemini session host), named once. */
@@ -110,23 +135,32 @@ final class LogTrigger {
     /** Gate outcomes, for structural diagnostics. */
     static final int ACCEPT = 0, NOT_TRIGGER = 1, BEFORE_SESSION = 2, FUTURE = 3, STALE = 4, DUPLICATE = 5;
     private static final String[] OUTCOMES = {"ACCEPT", "NOT_TRIGGER", "BEFORE_SESSION", "FUTURE", "STALE", "DUPLICATE"};
-    private static final String[] KINDS = {"NONE", "BAR", "POWER", "GOOGLE_DIED"};
+    private static final String[] KINDS = {"NONE", "BAR", "POWER", "GOOGLE_DIED", "POWER_SINGLE", "POWER_DOUBLE", "HOME"};
 
     /** Freshness, replay and duplicate-marker gate for one log session. Reader thread only. */
     static final class Gate {
         private final long watermark;
-        private final long[] last = new long[4];
-        private final boolean[] seen = new boolean[4];
+        private final long[] last = new long[7];
+        private final boolean[] seen = new boolean[7];
+        /** Every power marker, accepted or not (a duplicate onLongPress still has its own Breeno tail). */
+        private long lastPower;
+        private boolean powerSeen;
         Gate(long watermark) { this.watermark = watermark; }
 
         boolean accept(int kind, long entry, long now) { return check(kind, entry, now) == ACCEPT; }
 
         int check(int kind, long entry, long now) {
-            if (kind != BAR && kind != POWER && kind != GOOGLE_DIED) return NOT_TRIGGER;
+            if (kind < BAR || kind > HOME) return NOT_TRIGGER;
+            if (kind == POWER) { powerSeen = true; lastPower = entry; }
             if (entry < watermark) return BEFORE_SESSION;
             if (now < entry) return FUTURE;
             if (now - entry > MAX_AGE) return STALE;
             if (seen[kind] && entry - last[kind] < DEBOUNCE) return DUPLICATE;
+            // A double press also emits the single-press line; it is part of the double, never a screen-off request.
+            if (kind == POWER_SINGLE && seen[POWER_DOUBLE] && entry >= last[POWER_DOUBLE] && entry - last[POWER_DOUBLE] < DOUBLE_PAIR)
+                return DUPLICATE;
+            // The power long press's own caller-1000 Breeno line is part of that press, never a home long press.
+            if (kind == HOME && powerSeen && entry >= lastPower && entry - lastPower < POWER_TAIL) return DUPLICATE;
             seen[kind] = true; last[kind] = entry;
             return ACCEPT;
         }
@@ -147,6 +181,7 @@ final class LogTrigger {
         if (same(p, tag, tagEnd, POWER_TAG)) return starts(p, message, messageEnd, POWER_PREFIX) ? POWER : NONE;
         if (same(p, tag, tagEnd, BAR_TAG)) return contains(p, message, messageEnd, BAR_ACTION) ? BAR : NONE;
         if (same(p, tag, tagEnd, KILL_TAG)) return contains(p, message, messageEnd, INTERACTOR) ? GOOGLE_DIED : NONE;
+        if (same(p, tag, tagEnd, PRESS_TAG)) return starts(p, message, messageEnd, POWER_PREFIX) ? POWER_SINGLE : NONE;
         return NONE;
     }
 

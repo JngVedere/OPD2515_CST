@@ -46,7 +46,7 @@ public final class BarService extends AccessibilityService {
      */
     private static final long WARM_DELAY = 500, WARM_INTERVAL = 3000;
     /** Newest attempt per pathway only (StatusPolicy records); main thread only. */
-    static final String LAST_BAR = "last_bar", LAST_POWER = "last_power";
+    static final String LAST_BAR = "last_bar", LAST_POWER = "last_power", LAST_DOUBLE = "last_double";
     private static final String POWER_INPUT = "전원 버튼 길게 누르기 (기기 로그)";
 
     private static SharedPreferences prefs(Context context) { return context.getSharedPreferences("bar", MODE_PRIVATE); }
@@ -82,7 +82,8 @@ public final class BarService extends AccessibilityService {
 
     static boolean ready(Context context) {
         if (nativeMode(context)) return instance != null && enabled(context) && logState() == LogSession.ACTIVE
-            && BootRecovery.permitted(context) && Settings.Secure.getInt(context.getContentResolver(), BarGesture.GESTURE_KEY, -1) == 1;
+            && BootRecovery.permitted(context) && Settings.Secure.getInt(context.getContentResolver(),
+                BarGesture.threeButton(context) ? BarGesture.HOME_KEY : BarGesture.GESTURE_KEY, -1) == 1;
         return instance != null && enabled(context)
             && instance.target != null && instance.target.isAttachedToWindow();
     }
@@ -115,10 +116,31 @@ public final class BarService extends AccessibilityService {
         refreshConfiguration();
     }
 
+    /**
+     * Opt-in power double press (PowerButton), off by default. Target: absent = nothing (the power key is then left to
+     * the system), "" = circle to search, else a launcher component.
+     */
+    static final String POWER_DOUBLE = "power_double", POWER_DOUBLE_TARGET = "power_double_target", POWER_DOUBLE_LABEL = "power_double_label";
+    private static final String DOUBLE_INPUT = "전원 버튼 두 번 누르기 (기기 로그)";
+    static boolean doublePress(Context context) { return prefs(context).getBoolean(POWER_DOUBLE, false); }
+    static boolean doubleTarget(Context context) { return prefs(context).contains(POWER_DOUBLE_TARGET); }
+    static boolean doubleWanted(Context context) { return doublePress(context) && doubleTarget(context); }
+    static void setDoublePress(Context context, boolean on) {
+        prefs(context).edit().putBoolean(POWER_DOUBLE, on).apply();
+        refreshConfiguration();
+    }
+
+    /**
+     * Any of this app's own screens or its tile is running while the service is not: no reader, so the power key goes back
+     * to the system. Device: a force stop marks the service crashed and ColorOS clears the enabled list, so the service
+     * never comes back on its own and onDestroy never ran.
+     */
+    static void releaseOrphanedPowerKeys(Context context) { if (instance == null) PowerButton.restore(context); }
+
     static boolean logsPermitted(Context context) {
         return context.checkSelfPermission(Manifest.permission.READ_LOGS) == PackageManager.PERMISSION_GRANTED;
     }
-    static boolean logsWanted(Context context) { return power(context) || (enabled(context) && nativeMode(context)); }
+    static boolean logsWanted(Context context) { return power(context) || doubleWanted(context) || (enabled(context) && nativeMode(context)); }
     static int logState() { BarService service = instance; return service == null ? LogSession.OFF : service.logs.state(); }
     static boolean serviceRunning() { return instance != null; }
 
@@ -203,7 +225,10 @@ public final class BarService extends AccessibilityService {
         launchSearch();
     };
 
-    private String barInput() { return nativeMode(this) ? "ColorOS 기본 바 길게 누르기 (기기 로그)" : "터치 영역 길게 누르기"; }
+    private String barInput() {
+        if (!nativeMode(this)) return "터치 영역 길게 누르기";
+        return BarGesture.threeButton(this) ? "3버튼 홈 버튼 길게 누르기 (기기 로그)" : "ColorOS 기본 바 길게 누르기 (기기 로그)";
+    }
 
     private String searchBlocked() {
         if (!enabled(this)) return "사용 꺼짐";
@@ -223,7 +248,8 @@ public final class BarService extends AccessibilityService {
         PowerManager power = getSystemService(PowerManager.class);
         return "enabled=" + enabled(this) + " native=" + nativeMode(this) + " power=" + power(this) + " granted=" + granted(this)
             + " interactive=" + power.isInteractive() + " locked=" + getSystemService(KeyguardManager.class).isKeyguardLocked()
-            + " lockedAssist=" + lockedAssist(this) + " session=" + logs.state();
+            + " lockedAssist=" + lockedAssist(this) + " double=" + doubleWanted(this) + " powerKeys=" + PowerButton.applied(this)
+            + " session=" + logs.state();
     }
 
     /** One power policy for the press and the late finish gate (GeminiSession re-checks the same screen rule). */
@@ -329,10 +355,45 @@ public final class BarService extends AccessibilityService {
         @Override public void trigger(int kind) {
             Log.i("PadLog", "trigger kind=" + kind + " instance=" + (instance == BarService.this));
             if (kind == LogTrigger.BAR) barGesture();
+            // Home long press exists only in 3-button navigation; elsewhere a caller-1000 Breeno line is not the bar.
+            else if (kind == LogTrigger.HOME) {
+                if (BarGesture.threeButton(BarService.this)) barGesture();
+                else Log.i("PadBar", "home dispatch skipped: not 3-button navigation");
+            }
             else if (kind == LogTrigger.POWER) powerGesture();
             else if (kind == LogTrigger.GOOGLE_DIED) googleDied();
+            else if (kind == LogTrigger.POWER_SINGLE) singlePress();
+            else if (kind == LogTrigger.POWER_DOUBLE) doublePressed();
         }
     };
+
+    /** The system no longer turns the screen off on a short press while our settings are in place; this does it instead. */
+    private void singlePress() {
+        if (!PowerButton.applied(this) || !getSystemService(PowerManager.class).isInteractive()) return;
+        if (performGlobalAction(GLOBAL_ACTION_LOCK_SCREEN)) return;
+        // Never leave a power key that does nothing: give the short press back to the system.
+        Log.w("PadPowerKeys", "screen-off action refused; restoring power key settings");
+        PowerButton.restore(this);
+        android.widget.Toast.makeText(this, "화면을 끄지 못해 전원 버튼 설정을 원래대로 되돌렸습니다.", android.widget.Toast.LENGTH_LONG).show();
+    }
+
+    private void doublePressed() {
+        if (!PowerButton.applied(this)) return;
+        if (!doubleWanted(this) || !granted(this) || !unlockedScreen()) {
+            Log.i("PadPowerKeys", "double press skipped " + dispatchState());
+            attemptBegin(this, LAST_DOUBLE, StatusPolicy.CANCELLED, DOUBLE_INPUT,
+                !doubleWanted(this) ? "두 번 누르기 꺼짐" : !granted(this) ? "접근성 승인 해제됨" : "화면 꺼짐 또는 잠금 상태");
+            return;
+        }
+        long attempt = attemptBegin(this, LAST_DOUBLE, StatusPolicy.PENDING, DOUBLE_INPUT, "입력 인식 · 실행 화면 시작 요청");
+        try {
+            startActivity(new Intent(this, MainActivity.class).putExtra(MainActivity.ATTEMPT, attempt).putExtra(MainActivity.DOUBLE, true)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_NO_ANIMATION));
+        } catch (RuntimeException error) {
+            Log.e("PadPowerKeys", "Double press launch failed", error);
+            attemptUpdate(this, LAST_DOUBLE, attempt, StatusPolicy.FAILED, "실행 화면을 시작하지 못함 (" + error.getClass().getSimpleName() + ")");
+        }
+    }
 
     /** Google's :interactor was killed: restart it now (or at the next screen on) so the next power press is not cold. */
     private void googleDied() {
@@ -425,6 +486,11 @@ public final class BarService extends AccessibilityService {
         handler.removeCallbacks(longPress);
         if (!power(this)) powerRequest++; // Power option off: no delayed Gemini request survives.
         if (!logsWanted(this) || !logsPermitted(this)) logs.close();
+        // The power key is handed over only while every press can be seen; any gap gives it back to the system.
+        if (PowerButton.wanted(doublePress(this), doubleTarget(this), instance == this && granted(this), BootRecovery.permitted(this),
+                logs.state() == LogSession.ACTIVE)) {
+            if (!PowerButton.apply(this)) Log.w("PadPowerKeys", "power key settings not applied");
+        } else PowerButton.restore(this);
         if (!enabled(this)) detach();
         else if (nativeMode(this)) {
             detach();
@@ -526,6 +592,7 @@ public final class BarService extends AccessibilityService {
         cancelPending();
         detach();
         logs.close();
+        PowerButton.restore(this); // No reader, no screen-off from this app: the system short press comes back first.
         if (nativeMode(this)) BarGesture.restore(this); // No reader while unbound; reapplied after the next approved session.
         unregisterReceiver(screen);
         super.onDestroy();

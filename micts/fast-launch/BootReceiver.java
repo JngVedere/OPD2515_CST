@@ -13,6 +13,9 @@ import android.util.Log;
 public final class BootReceiver extends BroadcastReceiver {
     @Override public void onReceive(Context context, Intent intent) {
         if (Intent.ACTION_LOCKED_BOOT_COMPLETED.equals(intent.getAction())) {
+            // No log reader exists before unlock: the system short press (screen off) comes back first. Not on the later
+            // BOOT_COMPLETED, which can arrive after a fresh session has applied the settings again.
+            PowerButton.restore(context);
             BootRecovery.captureBeforeUnlock(context);
             return;
         }

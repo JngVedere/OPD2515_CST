@@ -4,7 +4,7 @@
     <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS" />
     <!-- Development permission granted once over ADB; each new log session still needs Android's own confirmation. -->
     <uses-permission android:name="android.permission.READ_LOGS" />
-    <!-- Manual "업데이트 확인" only (AppUpdate): GitHub release metadata/APK download and Android's install confirmation. -->
+    <!-- Settings-screen update check only (AppUpdate: the button, or once per open if left on): GitHub release metadata/APK download and Android's install confirmation. -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <queries>

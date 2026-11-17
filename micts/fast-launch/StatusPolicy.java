@@ -37,7 +37,12 @@ final class StatusPolicy {
      * GESTURE_TASKBAR: system enable_launcher_taskbar is exactly "1"; the launcher's taskbar bar reports the hold itself
      * (observed even with the gesture bar hidden), so the hide setting is not an error. Any other taskbar value keeps the old rules.
      */
-    static final int GESTURE_SHOWN = 0, GESTURE_HIDDEN = 1, GESTURE_UNKNOWN = 2, GESTURE_TASKBAR = 3;
+    static final int GESTURE_SHOWN = 0, GESTURE_HIDDEN = 1, GESTURE_UNKNOWN = 2, GESTURE_TASKBAR = 3, GESTURE_BUTTONS = 4;
+
+    /** nav: OEM hide_navigationbar_enable; exactly "0" is 3-button navigation (home long press), where the gesture bar does not exist. */
+    static int gestureBar(String value, String taskbar, String nav) {
+        return "0".equals(nav) ? GESTURE_BUTTONS : gestureBar(value, taskbar);
+    }
 
     static int gestureBar(String value, String taskbar) {
         if ("1".equals(taskbar)) return GESTURE_TASKBAR;
@@ -50,7 +55,8 @@ final class StatusPolicy {
         if (!approved) return "접근성 설정 필요 · 접근성 설정에서 Circle-to-Search Trigger를 켜주세요";
         if (!enabled) return "꺼짐";
         if (!live) return "서비스 연결 대기 · 접근성 승인됨, 계속되면 접근성에서 껐다 다시 켜주세요";
-        String where = nativeMode ? "ColorOS 기본 바" : "터치 영역";
+        boolean buttons = gestureBar == GESTURE_BUTTONS;
+        String where = nativeMode ? (buttons ? "3버튼 홈 버튼" : "ColorOS 기본 바") : "터치 영역";
         if (nativeMode) {
             if (gestureBar == GESTURE_HIDDEN)
                 return "오류 · 제스처 안내 막대 숨기기가 켜져 있습니다. 설정 → 시스템 및 업데이트 → 시스템 탐색에서 끄세요";
@@ -61,10 +67,11 @@ final class StatusPolicy {
             if (!ready) return "제스처 설정 확인 필요 · " + where;
         } else if (!ready) return "터치 영역 연결 대기 · 잠금 해제 후 다시 확인";
         if (cts && google != GOOGLE_READY) return where + " 감지 중 · 서클 투 서치: " + googleProblem(google);
-        if (nativeMode && gestureBar != GESTURE_SHOWN && gestureBar != GESTURE_TASKBAR)
+        if (nativeMode && gestureBar != GESTURE_SHOWN && gestureBar != GESTURE_TASKBAR && !buttons)
             return where + " 감지 중 · 제스처 안내 막대 표시 여부 확인 불가 (설정 → 시스템 및 업데이트 → 시스템 탐색에서 숨기기가 꺼져 있는지 확인)";
         return "사용 중 · " + where + " 감지 중" + (cts ? " · Google 설정됨, 실제 연결 상태는 확인 불가" : "")
-            + (nativeMode && gestureBar == GESTURE_TASKBAR ? " · 작업 표시줄 기준" : "");
+            + (nativeMode && gestureBar == GESTURE_TASKBAR ? " · 작업 표시줄 기준" : "")
+            + (!nativeMode && buttons ? " · 3버튼 탐색에서는 홈 화면의 최근 앱 버튼을 영역이 가릴 수 있음" : "");
     }
 
     /** Power long press -> small Gemini readiness. Breeno is not a prerequisite here; WSS only enables the per-press rebind. */

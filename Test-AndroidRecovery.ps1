@@ -119,7 +119,8 @@ public class Context {
     private final boolean deviceProtected;
     private final Map<String,SharedPreferences> credentialPrefs = new HashMap<>();
     private final Map<String,SharedPreferences> devicePrefs = new HashMap<>();
-    public final Map<String,String> secure = new HashMap<>();
+    public final Map<String,String> secure = new HashMap<>(), global = new HashMap<>();
+    public int globalWrites, failGlobalWrites, globalWritesFailAt;
     public int permission, bootCount = 4, writes, failIntWrites, failStringWrites, throwReads, throwStringWrites, throwAfterStringWrites;
     public boolean credentialLocked;
     public Runnable beforeWrite;
@@ -166,6 +167,15 @@ public class Settings {
     public static final class Global {
         public static final String BOOT_COUNT = "boot";
         public static int getInt(Context context, String key, int fallback) { return context.bootCount; }
+        // Device: hidden keys are not readable by apps (Android 12+); PowerButton must never depend on a read.
+        public static String getString(Context context, String key) { throw new SecurityException("Settings key: <" + key + "> is not readable."); }
+        public static boolean putString(Context context, String key, String value) {
+            context.globalWrites++;
+            if (context.failGlobalWrites > 0) { context.failGlobalWrites--; return false; }
+            if (context.globalWrites == context.globalWritesFailAt) return false;
+            if (value == null) context.global.remove(key); else context.global.put(key,value);
+            return true;
+        }
     }
 }
 '@
@@ -565,6 +575,57 @@ public final class StateHarness {
         // Only positive outcomes may go on to Gemini (the former true results); every refusal stays closed.
         for (int outcome : new int[]{VoiceRepair.REBOUND,VoiceRepair.NO_WSS,VoiceRepair.NOT_GOOGLE}) check(VoiceRepair.ready(outcome),"Rebind outcome "+outcome+" may request Gemini");
         for (int outcome : new int[]{VoiceRepair.BUSY,VoiceRepair.RESTORE_PENDING,VoiceRepair.NOT_RESTORED,VoiceRepair.INTERRUPTED,VoiceRepair.ERROR}) check(!VoiceRepair.ready(outcome) && !VoiceRepair.describe(outcome).isEmpty(),"Rebind outcome "+outcome+" never requests Gemini");
+        // 3-button home key: managed with the gesture key in native mode, own journal, untouched when absent or by touch mode.
+        Context homeKeys = new Context();
+        homeKeys.secure.put(BarGesture.GESTURE_KEY,"0"); homeKeys.secure.put(BarGesture.HOME_KEY,"0");
+        check(BarGesture.enableBreenoGesture(homeKeys) && "1".equals(homeKeys.secure.get(BarGesture.HOME_KEY)) && gesture(homeKeys)==1,"Native mode turns on the home long press with the gesture bar");
+        check(BarGesture.restore(homeKeys) && "0".equals(homeKeys.secure.get(BarGesture.HOME_KEY)) && gesture(homeKeys)==0
+            && !bar(homeKeys).contains(BarGesture.HOME_ORIGINAL),"Both originals come back");
+        Context homeOn = new Context();
+        homeOn.secure.put(BarGesture.GESTURE_KEY,"1"); homeOn.secure.put(BarGesture.HOME_KEY,"1");
+        BarGesture.disableBreenoGesture(homeOn);
+        check("1".equals(homeOn.secure.get(BarGesture.HOME_KEY)) && gesture(homeOn)==0,"Touch mode never changes the home key");
+        Context homeChanged = new Context();
+        homeChanged.secure.put(BarGesture.GESTURE_KEY,"1"); homeChanged.secure.put(BarGesture.HOME_KEY,"0");
+        check(BarGesture.enableBreenoGesture(homeChanged),"Enable with home off");
+        homeChanged.secure.put(BarGesture.HOME_KEY,"0"); // user turned it off again in ColorOS settings
+        check(BarGesture.restore(homeChanged) && "0".equals(homeChanged.secure.get(BarGesture.HOME_KEY)),"A home value changed by the user is kept");
+        Context navigation = new Context();
+        check(!BarGesture.threeButton(navigation),"Missing navigation value is not 3-button");
+        navigation.secure.put(BarGesture.NAV_KEY,"0");
+        check(BarGesture.threeButton(navigation),"hide_navigationbar_enable 0 is 3-button");
+        navigation.secure.put(BarGesture.NAV_KEY,"3");
+        check(!BarGesture.threeButton(navigation),"Gesture navigation is not 3-button");
+        // Power double press: journal before any write, write-only (hidden keys are unreadable), restore = unset.
+        for (int mask = 0; mask < 32; mask++)
+            check(PowerButton.wanted((mask&1)!=0,(mask&2)!=0,(mask&4)!=0,(mask&8)!=0,(mask&16)!=0) == (mask==31),"Power keys are handed over only when every condition holds ("+mask+")");
+        Context keys = new Context();
+        check(PowerButton.restore(keys) && keys.globalWrites==0,"Nothing applied: restore is a no-op");
+        check(PowerButton.apply(keys) && "0".equals(keys.global.get(PowerButton.SHORT)) && "2".equals(keys.global.get(PowerButton.DOUBLE)) && PowerButton.applied(keys),"Apply sets short=nothing and double=wait");
+        check(PowerButton.apply(keys) && keys.globalWrites==2,"Apply is idempotent within the process");
+        check(PowerButton.restore(keys) && keys.global.isEmpty() && !PowerButton.applied(keys),"Restore puts both back to unset");
+        Context custom = new Context();
+        custom.global.put(PowerButton.SHORT,"1");
+        check(PowerButton.apply(custom) && PowerButton.restore(custom) && custom.global.isEmpty(),"Restore is unset even over a hand-set value (documented ceiling)");
+        Context denied = new Context(); denied.permission = -1;
+        check(!PowerButton.apply(denied) && denied.globalWrites==0 && !PowerButton.applied(denied),"No WSS: nothing changes");
+        // Double write succeeds, short write fails: both end unset and the journal is cleared.
+        Context halfway = new Context();
+        halfway.globalWritesFailAt = 2;
+        check(!PowerButton.apply(halfway) && halfway.global.isEmpty() && !PowerButton.applied(halfway),"A failed second write is undone");
+        Context pending = new Context();
+        check(PowerButton.apply(pending),"Apply before WSS is revoked");
+        pending.permission = -1;
+        check(!PowerButton.restore(pending) && PowerButton.applied(pending) && "0".equals(pending.global.get(PowerButton.SHORT)),"Restore without WSS keeps the journal for later");
+        pending.permission = 0;
+        check(PowerButton.restore(pending) && pending.global.isEmpty(),"Restore completes once WSS is back");
+        Context journal = new Context();
+        journal.createDeviceProtectedStorageContext().getSharedPreferences("power_keys",0).failNextCommit = true;
+        check(!PowerButton.apply(journal) && journal.globalWrites==0,"No journal, no system change");
+        Context locked = new Context();
+        check(PowerButton.apply(locked),"Apply before reboot");
+        locked.credentialLocked = true;
+        check(PowerButton.restore(locked) && locked.global.isEmpty(),"Restore works before the first unlock (device-protected journal)");
         System.out.println("PASS: " + checks + " stateful Android settings checks; actual recovery and gesture classes, no device used.");
     }
 }
@@ -578,6 +639,7 @@ $stateSources = @(Get-ChildItem -LiteralPath $stateFolder -Filter *.java -Recurs
 $stateSources += Join-Path $PSScriptRoot 'micts/fast-launch/BootRecovery.java'
 $stateSources += Join-Path $PSScriptRoot 'micts/fast-launch/BarGesture.java'
 $stateSources += Join-Path $PSScriptRoot 'micts/fast-launch/VoiceRepair.java'
+$stateSources += Join-Path $PSScriptRoot 'micts/fast-launch/PowerButton.java'
 $stateClasses = Join-Path $stateFolder 'classes'
 & javac.exe --release 17 -encoding UTF-8 -d $stateClasses @stateSources
 if ($LASTEXITCODE) { throw 'Stateful Android test compilation failed' }
@@ -628,7 +690,8 @@ foreach ($name in $allSources.Keys) {
     }
 }
 $securityChecks++
-# Network only in the manual updater, only to the repository's GitHub hosts, only from the settings button.
+# Network only in the updater, only to the repository's GitHub hosts, only from the settings screen (button, or one
+# opt-out check per open that only shows a banner; installing still needs the user's tap and Android's confirmation).
 $network = @($allSources.Keys | Where-Object { $allSources[$_] -match 'java\.net\.|HttpsURLConnection|HttpURLConnection|URLConnection|okhttp|WebView' } | Sort-Object)
 if (($network -join ',') -cne 'AppUpdate.java') { throw ('Network code is allowed only in AppUpdate.java: ' + ($network -join ',')) }
 $hosts = @([regex]::Matches($allSources['AppUpdate.java'], 'https://[^"/]+') | ForEach-Object { $_.Value } | Sort-Object -Unique)
@@ -636,9 +699,13 @@ if (($hosts -join ',') -cne 'https://github.com,https://raw.githubusercontent.co
 $updateUsers = @($allSources.Keys | Where-Object { $_ -ne 'AppUpdate.java' -and $allSources[$_] -match 'AppUpdate\.(check|install)\(' } | Sort-Object)
 if (($updateUsers -join ',') -cne 'SetupActivity.java' -or
     $allSources['SetupActivity.java'] -notmatch 'button\("업데이트 확인", this::checkUpdate\)' -or
+    ([regex]::Matches($allSources['SetupActivity.java'], 'checkUpdate\(true\)')).Count -ne 1 -or
+    $allSources['SetupActivity.java'] -notmatch 'if \(preferences\.getBoolean\(UPDATE_AUTO, true\)\) checkUpdate\(true\);' -or
+    $allSources['SetupActivity.java'] -notmatch 'if \(auto\) \{ if \(failure == null && release != null\) showUpdateBanner\(release\); return; \}' -or
+    ([regex]::Matches($allSources['SetupActivity.java'], 'installUpdate\(release\)')).Count -ne 2 -or
     $allSources['AppUpdate.java'] -notmatch '(?s)if \(!hex\(digest\.digest\(\)\)\.equals\(release\.sha256\)\) throw[^;]*;.*session\.commit\(' -or
     $allSources['AppUpdate.java'] -notmatch 'if \(!committed\) installer\.abandonSession\(id\);') {
-    throw 'Updates run only from the settings button, and a session is committed only after the SHA-256 matches'
+    throw 'Updates run only from the settings screen (button or opt-out check on open), install only on a tap, and a session is committed only after the SHA-256 matches'
 }
 $updateReceiver = $manifest.SelectSingleNode('/manifest/application/receiver[@android:name=".AppUpdate$Result"]',$namespaces)
 if (-not $updateReceiver -or $updateReceiver.GetAttribute('exported',$namespaces.LookupNamespace('android')) -ne 'false' -or $updateReceiver.SelectNodes('intent-filter').Count -ne 0) {
@@ -692,6 +759,22 @@ if ([regex]::Matches($service, 'GeminiSession\.launch\(').Count -ne 1 -or
     throw 'Gemini may be requested only after the rebind finished and the request was rechecked'
 }
 $securityChecks++
+# Power double press: the only global action is the screen-off for a logged single press while our power-key settings are
+# applied; the two power_button_* settings are written only by PowerButton (journal, exact restore).
+$allowedLock = 'performGlobalAction(GLOBAL_ACTION_LOCK_SCREEN)'
+$joinedSources = $allSources.Values -join "`n"
+if (([regex]::Matches($joinedSources, 'performGlobalAction\(')).Count -ne 1 -or
+    ([regex]::Matches($service, [regex]::Escape($allowedLock))).Count -ne 1 -or
+    $service -notmatch ('(?s)private void singlePress\(\) \{\s*if \(!PowerButton\.applied\(this\) \|\| !getSystemService\(PowerManager\.class\)\.isInteractive\(\)\) return;\s*if \(' + [regex]::Escape($allowedLock) + '\) return;' + $method + 'PowerButton\.restore\(this\);') -or
+    @($allSources.Keys | Where-Object { $allSources[$_] -match 'Settings\.Global\.put|power_button_' }) -join ',' -cne 'PowerButton.java' -or
+    $service -notmatch '(?s)if \(PowerButton\.wanted\(doublePress\(this\), doubleTarget\(this\), instance == this && granted\(this\), BootRecovery\.permitted\(this\),\s*logs\.state\(\) == LogSession\.ACTIVE\)\) \{' + $method + '\} else PowerButton\.restore\(this\);' -or
+    $service -notmatch '(?s)logs\.close\(\);\s*PowerButton\.restore\(this\);' -or
+    $allSources['BootReceiver.java'] -notmatch '(?s)LOCKED_BOOT_COMPLETED\.equals\(intent\.getAction\(\)\)\) \{' + $method + 'PowerButton\.restore\(context\);' -or
+    $service -notmatch 'static boolean doublePress\(Context context\) \{ return prefs\(context\)\.getBoolean\(POWER_DOUBLE, false\); \}') {
+    throw 'Power double press: one screen-off action, power_button_* written only by PowerButton, applied only with a live session and restored on every gap'
+}
+$allowedSources = $joinedSources.Replace($allowedLock, '')
+$securityChecks++
 # One screen policy for press, late finish and GeminiSession: LogTrigger.powerLaunch/powerScreen; locked requests are gesture-only (no assist data/screenshot).
 $gemini = $allSources['GeminiSession.java']
 if ($service -notmatch '(?s)private boolean powerAllowed\(boolean lockedAllowed, long age\) \{\s*return LogTrigger\.powerLaunch\(power\(this\), granted\(this\), getSystemService\(PowerManager\.class\)\.isInteractive\(\),\s*getSystemService\(KeyguardManager\.class\)\.isKeyguardLocked\(\), lockedAllowed, logs\.state\(\) == LogSession\.ACTIVE, age\);' -or
@@ -701,7 +784,7 @@ if ($service -notmatch '(?s)private boolean powerAllowed\(boolean lockedAllowed,
     $gemini -notmatch '(?s)boolean locked = keyguard\.isKeyguardLocked\(\);\s*if \(!LogTrigger\.powerScreen\(power\.isInteractive\(\), locked, lockedAllowed\)\) return false;\s*int flags = locked \? LOCKED_FLAGS : FLAGS;' -or
     ([regex]::Matches($gemini, 'showSessionFromSession", null, args, flags')).Count -ne 2 -or ([regex]::Matches($gemini, ', FLAGS[,)]')).Count -ne 0 -or
     ([regex]::Matches($gemini, 'LogTrigger\.powerScreen\(')).Count -ne 2 -or
-    ($allSources.Values -join "`n") -match 'requestDismissKeyguard|disableKeyguard|newKeyguardLock|FLAG_DISMISS_KEYGUARD|FLAG_SHOW_WHEN_LOCKED|setShowWhenLocked|setTurnScreenOn|FLAG_TURN_SCREEN_ON|ACQUIRE_CAUSES_WAKEUP|newWakeLock|wakeUp\(|launchVoiceAssistFromKeyguard|LOCK_SCREEN|lockscreen') {
+    $allowedSources -match 'requestDismissKeyguard|disableKeyguard|newKeyguardLock|FLAG_DISMISS_KEYGUARD|FLAG_SHOW_WHEN_LOCKED|setShowWhenLocked|setTurnScreenOn|FLAG_TURN_SCREEN_ON|ACQUIRE_CAUSES_WAKEUP|newWakeLock|wakeUp\(|launchVoiceAssistFromKeyguard|LOCK_SCREEN|lockscreen') {
     throw 'Locked-screen assistant: one shared gate, gesture-only flags while locked, no keyguard dismissal, wake or lock-setting changes'
 }
 $securityChecks++
@@ -737,10 +820,13 @@ $securityChecks++
 $settingsSource = $allSources['SetupActivity.java']
 $unguarded = [regex]::Replace($settingsSource, '(?s)syncing = true;\s*try \{.*?\} finally \{ syncing = false; \}', '')
 $unguarded = $unguarded.Replace('modeGroup.check(BarService.nativeMode(this) ? colorId : touchId);', '') # initial state, before the listener exists
-if ($unguarded -match 'powerSwitch\.setChecked\(|lockedSwitch\.setChecked\(|bootSwitch\.setChecked\(|modeGroup\.check\(' -or
+if ($unguarded -match 'powerSwitch\.setChecked\(|lockedSwitch\.setChecked\(|doubleSwitch\.setChecked\(|bootSwitch\.setChecked\(|modeGroup\.check\(' -or
     $settingsSource -notmatch '(?s)modeGroup\.setOnCheckedChangeListener\(\(group, selected\) -> \{\s*if \(syncing\) return;' -or
     $settingsSource -notmatch '(?s)powerSwitch = toggle\("[^"]*", BarService\.power\(this\), \(view, checked\) -> \{\s*if \(syncing\) return;' -or
     $settingsSource -notmatch '(?s)lockedSwitch = toggle\("[^"]*", BarService\.lockedAssist\(this\), \(view, checked\) -> \{\s*if \(syncing\) return;' -or
+    $settingsSource -notmatch '(?s)doubleSwitch = toggle\("[^"]*", BarService\.doublePress\(this\), \(view, checked\) -> \{\s*if \(syncing\) return;' -or
+    $settingsSource -notmatch '(?s)if \(consent\) builder\.setPositiveButton\("[^"]*", \(dialog, which\) -> \{\s*BarService\.setDoublePress\(this, true\);' -or
+    ([regex]::Matches($settingsSource, 'setDoublePress\(this, true\)')).Count -ne 1 -or
     $settingsSource -notmatch '(?s)bootSwitch = toggle\("[^"]*", BootRecovery\.wanted\(this\), \(view, checked\) -> \{\s*if \(syncing\) return;') {
     throw 'Settings refresh must not trigger repair or enable/disable setters'
 }
@@ -773,7 +859,7 @@ if ($barService -match 'TYPE_WINDOW_|TYPE_VIEW_|com\.heytap\.speechassist|com\.c
 $securityChecks++
 # Retired boot auto-Allow: no consent state, node/window reading, clicks or approval history anywhere.
 if (Test-Path -LiteralPath (Join-Path $appFolder 'BootConsent.java')) { throw 'Retired boot auto-Allow source must be deleted' }
-if (($allSources.Values -join "`n") -match 'BootConsent|performAction|ACTION_CLICK|AccessibilityNodeInfo|AccessibilityWindowInfo|getWindows\(|getRootInActiveWindow|findAccessibilityNodeInfos|getSource\(|log_approved_boot|LOG_APPROVED|bootCompleted|AutoApproval|autoBridge|autoSession|dispatchGesture|takeScreenshot|getBoundsIn|performGlobalAction|ACTION_SET_TEXT') {
+if ($allowedSources -match 'BootConsent|performAction|ACTION_CLICK|AccessibilityNodeInfo|AccessibilityWindowInfo|getWindows\(|getRootInActiveWindow|findAccessibilityNodeInfos|getSource\(|log_approved_boot|LOG_APPROVED|bootCompleted|AutoApproval|autoBridge|autoSession|dispatchGesture|takeScreenshot|getBoundsIn|performGlobalAction|ACTION_SET_TEXT') {
     throw 'No automatic Allow: no node or window reading, clicks, gestures, screenshots or boot approval history'
 }
 $securityChecks++

@@ -8,7 +8,7 @@ import android.os.Build;
 import android.os.Handler;
 
 public final class BarTile extends TileService {
-    @Override public void onStartListening() { refresh(); }
+    @Override public void onStartListening() { BarService.releaseOrphanedPowerKeys(this); refresh(); }
 
     @Override public void onClick() {
         if (!BarService.granted(this)) {

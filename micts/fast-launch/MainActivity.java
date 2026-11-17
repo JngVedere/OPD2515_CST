@@ -18,6 +18,8 @@ public final class MainActivity extends Activity {
     static final String TARGET_LABEL = "target_label";
     /** Internal extra from BarService: the bottom-trigger attempt this launch reports to (0 = none). */
     static final String ATTEMPT = "attempt";
+    /** Internal extra from BarService: power double press, so its own target and record are used. */
+    static final String DOUBLE = "double";
     private static final ComponentName MICTS = new ComponentName("com.parallelc.micts", "com.parallelc.micts.ui.activity.MainActivity");
 
     /** The default target and an explicitly picked MiCTS both take the CTS path (Google warmup, then MiCTS). */
@@ -27,6 +29,7 @@ public final class MainActivity extends Activity {
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final Runnable trigger = this::openMiCTS;
     private long attempt;
+    private String record = BarService.LAST_BAR;
     private boolean micTsPending;
     private String warmup = "";
 
@@ -43,7 +46,9 @@ public final class MainActivity extends Activity {
         getWindow().setNavigationBarColor(Color.TRANSPARENT);
         getWindow().setStatusBarContrastEnforced(false);
         getWindow().setNavigationBarContrastEnforced(false);
-        String selected = getSharedPreferences("bar", MODE_PRIVATE).getString(TARGET_COMPONENT, "");
+        boolean twice = getIntent().getBooleanExtra(DOUBLE, false);
+        if (twice) record = BarService.LAST_DOUBLE;
+        String selected = getSharedPreferences("bar", MODE_PRIVATE).getString(twice ? BarService.POWER_DOUBLE_TARGET : TARGET_COMPONENT, "");
         if (!selected.isEmpty()) {
             ComponentName component = ComponentName.unflattenFromString(selected);
             if (component == null || getPackageName().equals(component.getPackageName())) {
@@ -82,7 +87,7 @@ public final class MainActivity extends Activity {
         }
     }
 
-    private void record(int outcome, String detail) { BarService.attemptUpdate(this, BarService.LAST_BAR, attempt, outcome, detail); }
+    private void record(int outcome, String detail) { BarService.attemptUpdate(this, record, attempt, outcome, detail); }
 
     private void openMiCTS() {
         micTsPending = false;
