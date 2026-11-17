@@ -1,8 +1,10 @@
-﻿param([switch]$BuildApp, [string]$Sdk = "$env:LOCALAPPDATA/Android/Sdk")
+﻿param([switch]$BuildApp, [string]$Sdk = "$env:LOCALAPPDATA/Android/Sdk", [switch]$Beta)
 $ErrorActionPreference = 'Stop'
-if ($BuildApp) { & (Join-Path $PSScriptRoot 'micts/fast-launch/Build.ps1') -Sdk $Sdk }
+if ($BuildApp) { & (Join-Path $PSScriptRoot 'micts/fast-launch/Build.ps1') -Sdk $Sdk -Beta:$Beta }
 
-$release = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'App-Release.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+# -Beta: metadata goes to App-Release-Beta.json (publish the GitHub release as a pre-release); stable stays untouched.
+$metadataName = if ($Beta) { 'App-Release-Beta.json' } else { 'App-Release.json' }
+$release = Get-Content -LiteralPath (Join-Path $PSScriptRoot $metadataName) -Raw -Encoding UTF8 | ConvertFrom-Json
 $version = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'micts/fast-launch/App-Version.json') -Raw -Encoding UTF8 | ConvertFrom-Json
 if ($release.Schema -ne 1 -or $release.Package -cne 'dev.padhelper.fastcts') { throw 'Invalid app release schema or package.' }
 if ($release.Version -cnotmatch '^\d+\.\d+\.\d+(?:[-.A-Za-z0-9]+)?$' -or [long]$release.VersionCode -lt 1) { throw 'Invalid app release version.' }

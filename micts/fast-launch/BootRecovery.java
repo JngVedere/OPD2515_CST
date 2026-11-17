@@ -31,8 +31,22 @@ final class BootRecovery {
             == PackageManager.PERMISSION_GRANTED;
     }
 
+    /** On by default; still needs WRITE_SECURE_SETTINGS, and the user can turn it off. */
     static boolean wanted(Context context) {
-        return context.getSharedPreferences("bar", Context.MODE_PRIVATE).getBoolean(OPTION, false);
+        return context.getSharedPreferences("bar", Context.MODE_PRIVATE).getBoolean(OPTION, true);
+    }
+
+    /**
+     * ColorOS "자동 실행" off blocks this app's boot broadcasts (device: no LOCKED_BOOT_COMPLETED capture that boot), so
+     * a captured boot count behind the current one means auto-start was blocked. Unknown after an install or update
+     * made since this boot, when no boot broadcast could have arrived yet.
+     */
+    static boolean autoStartMissed(int currentBoot, int capturedBoot, long installedAt, long bootedAt) {
+        return currentBoot >= 0 && capturedBoot != currentBoot && installedAt < bootedAt;
+    }
+
+    static int capturedBoot(Context context) {
+        return context.createDeviceProtectedStorageContext().getSharedPreferences("boot", Context.MODE_PRIVATE).getInt("count", -2);
     }
 
     static void captureBeforeUnlock(Context context) {

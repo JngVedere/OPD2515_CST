@@ -36,6 +36,30 @@ public final class RecoveryHarness {
         check(!BarGesture.releaseShouldTrigger(349, false, false));
         check(!BarGesture.releaseShouldTrigger(1000, true, false));
         check(!BarGesture.releaseShouldTrigger(1000, false, true));
+        check(BootRecovery.autoStartMissed(32, 31, 1000, 2000));   // captured last boot only: auto-start blocked
+        check(!BootRecovery.autoStartMissed(32, 32, 1000, 2000));  // captured this boot
+        check(!BootRecovery.autoStartMissed(32, -2, 3000, 2000));  // installed after this boot: unknown, no warning
+        check(!BootRecovery.autoStartMissed(-1, 31, 1000, 2000));  // boot count unreadable
+        String sha = "9d3a0258f74a835df591fb0a1b83c99a858e8d5195e323b85ff8b7c2eeb0ad70", pkg = "dev.padhelper.fastcts";
+        AppUpdate.Release update = AppUpdate.newer(1, pkg, "0.3.2-patch2", 21, "Circle-to-Search-Trigger-0.3.2-patch2.apk", sha.toUpperCase(), 20);
+        check(update != null && update.code == 21 && update.sha256.equals(sha)
+            && update.apkUrl().equals("https://github.com/JngVedere/OPD2515_CST/releases/download/v0.3.2-patch2/Circle-to-Search-Trigger-0.3.2-patch2.apk"));
+        check(AppUpdate.newer(1, pkg, "0.3.2-patch2", 21, "Circle-to-Search-Trigger-0.3.2-patch2.apk", sha, 21) == null); // same code
+        check(AppUpdate.newer(1, pkg, "0.3.2-patch2", 21, "Circle-to-Search-Trigger-0.3.2-patch2.apk", sha, 22) == null); // older
+        check(AppUpdate.newer(2, pkg, "0.3.2-patch2", 21, "Circle-to-Search-Trigger-0.3.2-patch2.apk", sha, 20) == null);
+        check(AppUpdate.newer(1, "com.example.app", "0.3.2-patch2", 21, "Circle-to-Search-Trigger-0.3.2-patch2.apk", sha, 20) == null);
+        check(AppUpdate.newer(1, pkg, "0.3.2-patch2", 21, "Other-0.3.2-patch2.apk", sha, 20) == null);
+        check(AppUpdate.newer(1, pkg, "0.3.2-patch2", 21, "Circle-to-Search-Trigger-0.3.2-patch2.apk", sha.substring(1), 20) == null);
+        check(AppUpdate.newer(1, pkg, "0.3.2/../x", 21, "Circle-to-Search-Trigger-0.3.2/../x.apk", sha, 20) == null);
+        check(AppUpdate.newer(1, pkg, "0.3.2..x", 21, "Circle-to-Search-Trigger-0.3.2..x.apk", sha, 20) == null);
+        check(AppUpdate.newer(1, pkg, null, 21, null, sha, 20) == null);
+        check(AppUpdate.hex(new byte[]{0, 15, (byte) 255}).equals("000fff"));
+        AppUpdate.Release s22 = new AppUpdate.Release("0.3.3", 22, "f", sha), b23 = new AppUpdate.Release("0.3.4-beta1", 23, "f", sha);
+        check(AppUpdate.pick(s22, null) == s22 && !s22.beta);                                // beta off or none published
+        check(AppUpdate.pick(s22, b23) == b23 && b23.beta);                                  // newer beta wins, marked beta
+        check(AppUpdate.pick(null, new AppUpdate.Release("0.3.4-beta1", 23, "f", sha)).beta); // only a beta is newer
+        check(AppUpdate.pick(s22, new AppUpdate.Release("0.3.3-beta9", 22, "f", sha)) == s22); // tie: stable wins
+        check(AppUpdate.pick(null, null) == null);
         System.out.println("PASS: " + checks + " Android recovery checks; actual app policy and service-list code, no device used.");
     }
 }
@@ -583,7 +607,7 @@ if (-not $bridge -or $bridge.GetAttribute('exported',$namespaces.LookupNamespace
 }
 $securityChecks++
 $permissions = @($manifest.SelectNodes('/manifest/uses-permission',$namespaces) | ForEach-Object { $_.GetAttribute('name',$namespaces.LookupNamespace('android')) } | Sort-Object)
-if (($permissions -join ',') -cne 'android.permission.READ_LOGS,android.permission.RECEIVE_BOOT_COMPLETED,android.permission.WRITE_SECURE_SETTINGS') {
+if (($permissions -join ',') -cne 'android.permission.INTERNET,android.permission.READ_LOGS,android.permission.RECEIVE_BOOT_COMPLETED,android.permission.REQUEST_INSTALL_PACKAGES,android.permission.WRITE_SECURE_SETTINGS') {
     throw ('Unexpected permission set: ' + ($permissions -join ','))
 }
 $securityChecks++
@@ -602,6 +626,23 @@ foreach ($name in $allSources.Keys) {
     if ($allSources[$name] -match 'ProcessBuilder|Runtime\.getRuntime\(\)\.exec|/system/bin/logcat|app_process|NativeBarAgent') {
         throw ('No logcat child, shell agent or command execution is allowed: '+$name)
     }
+}
+$securityChecks++
+# Network only in the manual updater, only to the repository's GitHub hosts, only from the settings button.
+$network = @($allSources.Keys | Where-Object { $allSources[$_] -match 'java\.net\.|HttpsURLConnection|HttpURLConnection|URLConnection|okhttp|WebView' } | Sort-Object)
+if (($network -join ',') -cne 'AppUpdate.java') { throw ('Network code is allowed only in AppUpdate.java: ' + ($network -join ',')) }
+$hosts = @([regex]::Matches($allSources['AppUpdate.java'], 'https://[^"/]+') | ForEach-Object { $_.Value } | Sort-Object -Unique)
+if (($hosts -join ',') -cne 'https://github.com,https://raw.githubusercontent.com') { throw ('Updater may contact only GitHub: ' + ($hosts -join ',')) }
+$updateUsers = @($allSources.Keys | Where-Object { $_ -ne 'AppUpdate.java' -and $allSources[$_] -match 'AppUpdate\.(check|install)\(' } | Sort-Object)
+if (($updateUsers -join ',') -cne 'SetupActivity.java' -or
+    $allSources['SetupActivity.java'] -notmatch 'button\("업데이트 확인", this::checkUpdate\)' -or
+    $allSources['AppUpdate.java'] -notmatch '(?s)if \(!hex\(digest\.digest\(\)\)\.equals\(release\.sha256\)\) throw[^;]*;.*session\.commit\(' -or
+    $allSources['AppUpdate.java'] -notmatch 'if \(!committed\) installer\.abandonSession\(id\);') {
+    throw 'Updates run only from the settings button, and a session is committed only after the SHA-256 matches'
+}
+$updateReceiver = $manifest.SelectSingleNode('/manifest/application/receiver[@android:name=".AppUpdate$Result"]',$namespaces)
+if (-not $updateReceiver -or $updateReceiver.GetAttribute('exported',$namespaces.LookupNamespace('android')) -ne 'false' -or $updateReceiver.SelectNodes('intent-filter').Count -ne 0) {
+    throw 'Install status receiver must be internal and filterless'
 }
 $securityChecks++
 $opened = @($allSources.Keys | Where-Object { $_ -ne 'BarService.java' -and $allSources[$_] -match 'openLogSession\s*\(' })
@@ -699,7 +740,7 @@ $unguarded = $unguarded.Replace('modeGroup.check(BarService.nativeMode(this) ? c
 if ($unguarded -match 'powerSwitch\.setChecked\(|lockedSwitch\.setChecked\(|bootSwitch\.setChecked\(|modeGroup\.check\(' -or
     $settingsSource -notmatch '(?s)modeGroup\.setOnCheckedChangeListener\(\(group, selected\) -> \{\s*if \(syncing\) return;' -or
     $settingsSource -notmatch '(?s)powerSwitch = toggle\("[^"]*", BarService\.power\(this\), \(view, checked\) -> \{\s*if \(syncing\) return;' -or
-    $settingsSource -notmatch '(?s)lockedSwitch = toggle\("화면이 꺼지거나 잠긴 상태에서 Assistant 호출", BarService\.lockedAssist\(this\), \(view, checked\) -> \{\s*if \(syncing\) return;' -or
+    $settingsSource -notmatch '(?s)lockedSwitch = toggle\("[^"]*", BarService\.lockedAssist\(this\), \(view, checked\) -> \{\s*if \(syncing\) return;' -or
     $settingsSource -notmatch '(?s)bootSwitch = toggle\("[^"]*", BootRecovery\.wanted\(this\), \(view, checked\) -> \{\s*if \(syncing\) return;') {
     throw 'Settings refresh must not trigger repair or enable/disable setters'
 }

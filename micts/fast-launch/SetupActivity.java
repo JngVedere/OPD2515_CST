@@ -25,7 +25,7 @@ public final class SetupActivity extends Activity {
     private static final int ERROR_COLOR = 0xFFD93025;
     private TextView status, logStatus, powerStatus, recentStatus, targetLabel;
     private int secondary;
-    private LinearLayout body;
+    private LinearLayout body, warnings;
     /** Where text/toggle/button add views: body, or the current settings card opened by section(). */
     private LinearLayout section;
     private SharedPreferences preferences;
@@ -70,6 +70,17 @@ public final class SetupActivity extends Activity {
         android.content.res.TypedArray colors = obtainStyledAttributes(new int[]{android.R.attr.textColorSecondary});
         secondary = colors.getColor(0, 0xFF808080);
         colors.recycle();
+        // Warning card: only the missing prerequisites, each row opens where it is fixed. Hidden when nothing is missing.
+        warnings = new LinearLayout(this);
+        warnings.setOrientation(LinearLayout.VERTICAL);
+        android.graphics.drawable.GradientDrawable amber = new android.graphics.drawable.GradientDrawable();
+        amber.setColor(0x26F59E0B); // Translucent amber reads on both light and dark backgrounds.
+        amber.setCornerRadius(dp(12));
+        warnings.setBackground(amber);
+        warnings.setPadding(dp(16), dp(6), dp(16), dp(6));
+        LinearLayout.LayoutParams warningParams = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        warningParams.topMargin = dp(8);
+        body.addView(warnings, warningParams);
         // Status card: one row per pathway plus the recent records; tapping anywhere opens the last-attempt details.
         LinearLayout card = card();
         card.setPadding(dp(16), dp(2), dp(16), dp(2));
@@ -86,7 +97,7 @@ public final class SetupActivity extends Activity {
 
         section("실행 방식");
         modeGroup = new RadioGroup(this);
-        RadioButton touch = new RadioButton(this), color = new RadioButton(this);
+        RadioButton touch = phrase(new RadioButton(this)), color = phrase(new RadioButton(this));
         touchId = android.view.View.generateViewId(); colorId = android.view.View.generateViewId();
         touch.setId(touchId); touch.setText("하단 영역 인식"); touch.setTextSize(18); touch.setMinHeight(dp(52));
         color.setId(colorId); color.setText("ColorOS 기본 하단 바 · 로그 감지"); color.setTextSize(18); color.setMinHeight(dp(52));
@@ -98,56 +109,56 @@ public final class SetupActivity extends Activity {
             if (selected == colorId && BarService.enabled(this)) approveIfNeeded();
             refresh();
         });
-        text("하단 영역은 투명한 터치 영역을 사용합니다. ColorOS 기본 바는 시스템 애니메이션을 그대로 쓰고, 기기 로그로 길게 누르기를 감지합니다. 두 방식은 동시에 실행되지 않습니다. 끄기는 변경 전 제스처 값을 복구하므로 앱 삭제 전에 먼저 눌러주세요.", 14);
+        text("하단 영역 인식은 투명한 터치 영역을 씁니다. ColorOS 기본 하단 바는 시스템 애니메이션을 그대로 쓰고, 기기 로그로 길게 누르기를 감지합니다.\n앱을 삭제하기 전에는 '끄기'를 먼저 눌러 원래 제스처 설정을 복구해주세요.", 14);
 
         section("전원 버튼");
-        powerSwitch = toggle("전원 버튼 길게 눌러 작은 Gemini 열기", BarService.power(this), (view, checked) -> {
+        powerSwitch = toggle("전원 버튼 길게 눌러 Gemini Assistant 열기", BarService.power(this), (view, checked) -> {
             if (syncing) return;
             BarService.setPower(this, checked);
             if (checked) approveIfNeeded();
             refresh();
         });
-        text("전원 버튼을 길게 누르면 Gemini 앱 전체 화면이 아닌 작은 Gemini 창을 엽니다. 하단 실행 방식과 따로 켜고 끌 수 있으며, 아래 옵션을 켜지 않으면 잠금 화면에서는 동작하지 않습니다. 접근성, 기기 로그 권한과 ColorOS의 전원 버튼 음성 비서 호출 설정이 필요합니다.", 14);
+        text("Gemini 앱 전체 화면 대신 Gemini Assistant 창을 엽니다. 하단 실행 방식과 따로 켜고 끌 수 있습니다.\n접근성, 기기 로그 권한, ColorOS의 '전원 버튼으로 음성 비서 호출' 설정이 필요합니다.", 14);
         divider(section);
-        lockedSwitch = toggle("화면이 꺼지거나 잠긴 상태에서 Assistant 호출", BarService.lockedAssist(this), (view, checked) -> {
+        lockedSwitch = toggle("잠금 화면에서 Gemini Assistant 호출", BarService.lockedAssist(this), (view, checked) -> {
             if (syncing) return;
             BarService.setLockedAssist(this, checked);
             refresh();
         });
-        text("위 전원 버튼 옵션이 켜져 있을 때만 동작합니다. 잠금을 풀거나 우회하지 않으며, 잠긴 상태에서는 화면 내용·스크린샷을 보내지 않습니다. ColorOS의 Google 잠금 화면 표시 권한과 Gemini의 잠금 화면 설정이 필요할 수 있습니다. 처음 권한을 허용할 때는 잠금을 풀어주세요. 재부팅 후 첫 잠금 해제와 기기 로그 승인 전에는 동작하지 않습니다.", 14);
+        text("화면이 꺼졌거나 잠겨 있어도 전원 버튼으로 Gemini Assistant를 엽니다. 잠금을 풀거나 우회하지 않으며, 잠긴 상태에서는 화면 내용과 스크린샷을 보내지 않습니다.\nGemini의 잠금 화면 설정이 필요할 수 있고, 재부팅 후에는 첫 잠금 해제와 기기 로그 승인 뒤부터 동작합니다.", 14);
         divider(section);
         button("Google 음성 연결 다시 시작", this::repairVoice);
-        text("Google이 음성 서비스로 선택되어 있어도 시스템 연결이 끊겨 작은 Gemini가 뜨지 않을 수 있습니다. 그래서 전원 버튼을 길게 누를 때마다, Google이 선택되어 있고 보안 설정 쓰기 권한이 있으면 작은 Gemini를 열기 전에 먼저 다시 연결합니다. 이미 선택된 Google 음성 서비스만 약 0.35초 해제했다가 정확히 같은 값으로 되돌리며, 다른 어시스턴트로 바꾸지 않습니다. 감지 중인데도 뜨지 않으면 이 버튼을 누르세요. '감지 중'과 요청 수락은 Gemini 창이 실제로 떴다는 확인이 아닙니다.", 14);
+        text("Gemini Assistant가 뜨지 않을 때 눌러주세요. 이미 선택된 Google 음성 서비스를 약 0.35초 해제했다가 같은 값으로 되돌려 다시 연결하며, 다른 어시스턴트로 바꾸지 않습니다.\n보안 설정 쓰기 권한이 있으면 전원 버튼을 누를 때마다 자동으로도 실행됩니다.", 14);
 
         section("기기 로그");
         button("기기 로그 접근 승인 요청", () -> { BarService.requestApproval(this); status.postDelayed(this::refresh, 500); });
-        text("ColorOS 기본 바와 전원 버튼은 하나의 기기 로그 연결을 함께 사용합니다. 재부팅하면 첫 잠금 해제 뒤 Android의 기기 로그 접근 확인 창이 자동으로 한 번 뜨며, 허용하면 두 기능이 함께 다시 동작합니다. 다른 시스템 창에 가려 확인 창이 보이지 않았거나 거부했다면 이 버튼으로 다시 요청하세요. 앱이 승인을 대신 누르지 않으며, 강제 종료·권한 회수·시스템 제한으로 연결이 끊길 수 있습니다.", 14);
+        text("ColorOS 기본 하단 바와 전원 버튼이 함께 쓰는 연결입니다. 재부팅 후 첫 잠금 해제 때 Android 확인 창이 자동으로 뜹니다.\n창이 가려졌거나 거부했다면 이 버튼으로 다시 요청하세요. 앱이 승인을 대신 누르지는 않습니다.", 14);
 
         section("터치 영역");
         areaSwitch = toggle("인식 영역 표시", preferences.getBoolean("show_area", false), (view, checked) -> {
             preferences.edit().putBoolean("show_area", checked).apply();
             BarService.showPreview(checked);
         });
-        text("하단 영역 방식의 실제 인식 범위를 파란색으로 표시합니다. 설정 화면을 벗어나면 다시 투명해집니다. 기본 바 방식에서는 이 영역을 만들지 않습니다.", 14);
+        text("하단 영역 인식의 실제 범위를 파란색으로 보여줍니다. 설정 화면을 벗어나면 다시 투명해집니다.", 14);
 
         section("최근 앱");
         recentSwitch = toggle("최근 앱에 표시", preferences.getBoolean("show_recent", false), (view, checked) -> {
             preferences.edit().putBoolean("show_recent", checked).apply();
             applyRecentVisibility();
         });
-        text("이 설정 화면을 최근 앱 목록에 보이거나 숨깁니다. 앱서랍 아이콘은 표시하지 않습니다.", 14);
+        text("이 설정 화면을 최근 앱 목록에 표시합니다. 앱 서랍에는 아이콘이 없습니다.\n최근 앱에서 이 앱 카드를 잠가 두면 '모두 닫기' 때 앱이 종료되지 않습니다. 잠근 뒤에는 표시를 꺼도 잠금이 유지됩니다.", 14);
 
         section("연결 앱");
         targetLabel = text("", 18);
         button("앱 선택", this::chooseApp);
-        text("기본값은 서클 투 서치의 빠른 실행입니다. 다른 앱을 선택하면 그 앱이 바로 열립니다.", 14);
+        text("기본값은 서클 투 서치 빠른 실행입니다. 다른 앱을 고르면 그 앱이 바로 열립니다.", 14);
         divider(section);
-        text("서클 투 서치는 Google 앱과 MiCTS를 별도로 설치한 뒤, 기본 디지털 어시스턴트를 Google로 선택해주세요.", 14);
+        text("서클 투 서치를 쓰려면 Google 앱과 MiCTS를 설치하고, 기본 디지털 어시스턴트를 Google로 선택해주세요.", 14);
         button("기본 어시스턴트 설정", () -> {
             try { startActivity(new Intent(Settings.ACTION_VOICE_INPUT_SETTINGS)); }
             catch (ActivityNotFoundException unavailable) {
                 Toast.makeText(this, "설정 → 앱 → 기본 앱에서 디지털 어시스턴트를 Google로 선택해주세요.", Toast.LENGTH_LONG).show();
-                startActivity(new Intent(Settings.ACTION_SETTINGS));
+                startActivity(freshSettings(Settings.ACTION_SETTINGS));
             }
         });
 
@@ -161,7 +172,7 @@ public final class SetupActivity extends Activity {
             }
             preferences.edit().putBoolean(BootRecovery.OPTION, checked).apply();
         });
-        text("이전에 직접 켠 접근성만 재부팅 직후 복구합니다. 부팅 전에 접근성을 끄거나 이 옵션·사용을 끄면 자동 복구하지 않습니다. 이 선택 기능은 최초 한 번 ADB로 보안 설정 쓰기 권한을 허용해야 합니다.", 14);
+        text("직접 켜 두었던 이 앱의 접근성이 재부팅 후 꺼져 있으면 다시 켭니다. 보안 설정 쓰기 권한이 필요합니다.", 14);
         button("최초 ADB 설정 안내", this::adbHelp);
         divider(section);
         button("접근성 설정", this::openAccessibility);
@@ -173,17 +184,18 @@ public final class SetupActivity extends Activity {
                     getMainExecutor(), result -> { });
             } else Toast.makeText(this, "빠른 설정의 편집 화면에서 Circle-to-Search Trigger 타일을 직접 추가해주세요.", Toast.LENGTH_LONG).show();
         });
-        button("자동 실행 설정", () -> {
-            Toast.makeText(this, "설정에서 앱 → 자동 실행 → Circle-to-Search Trigger을 허용해주세요.", Toast.LENGTH_LONG).show();
-            startActivity(new Intent(Settings.ACTION_SETTINGS));
-        });
-        button("앱 정보와 절전 설정", () -> startActivity(new Intent(
-            Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:" + getPackageName()))));
-        button("최근 앱 정리 제외 설정", () -> {
-            recentSwitch.setChecked(true);
-            Toast.makeText(this, "최근 앱에서 Circle-to-Search Trigger 카드를 잠근 뒤, 필요하면 최근 앱 표시를 다시 꺼주세요.", Toast.LENGTH_LONG).show();
-        });
+        button("자동 실행 설정", this::openAutoStart);
+        button("앱 정보와 절전 설정", this::openAppInfo);
+        button("최근 앱 정리 제외 설정", this::recentLockPrompt);
         button("설정 닫기", () -> { applyRecentVisibility(); moveTaskToBack(true); });
+
+        section("업데이트");
+        toggle("베타 버전도 확인", preferences.getBoolean(UPDATE_BETA, false),
+            (view, checked) -> preferences.edit().putBoolean(UPDATE_BETA, checked).apply());
+        text("켜면 정식 버전보다 먼저 나오는 베타 버전도 업데이트로 알려줍니다. 새 기능을 먼저 써볼 수 있지만, 아직 검증 중이라 오류가 있을 수 있습니다.\n끄면 정식 버전만 확인합니다. 베타를 설치한 뒤 끄면, 더 높은 정식 버전이 나올 때 그 버전으로 업데이트됩니다.", 14);
+        divider(section);
+        button("업데이트 확인", this::checkUpdate);
+        text("누를 때만 GitHub에서 새 버전을 확인하며, 기기 정보는 보내지 않습니다. 새 버전은 파일 검증 후 Android 설치 화면으로 설치합니다.\n처음 한 번은 '출처를 알 수 없는 앱 설치' 허용이 필요하고, 업데이트 후에는 기기 로그 승인을 다시 해야 합니다.", 14);
         section = body; // Footer sits below the cards.
         text("상태 알림 없이 실행됩니다. 선택한 방식으로 연결 앱을 엽니다. 화면 내용 읽기와 캡처는 사용하지 않습니다.", 14)
             .setPadding(0, dp(16), 0, dp(9));
@@ -192,6 +204,63 @@ public final class SetupActivity extends Activity {
         } catch (android.content.pm.PackageManager.NameNotFoundException unavailable) {
             text("버전 정보 없음", 14);
         }
+    }
+
+    /** Main thread only: one check or download at a time. */
+    private boolean updating;
+    private static final String UPDATE_BETA = "update_beta";
+
+    private void checkUpdate() {
+        if (updating) { Toast.makeText(this, "이미 업데이트를 확인하는 중입니다.", Toast.LENGTH_SHORT).show(); return; }
+        updating = true;
+        Toast.makeText(this, "최신 버전을 확인하는 중입니다.", Toast.LENGTH_SHORT).show();
+        Context app = getApplicationContext();
+        boolean beta = preferences.getBoolean(UPDATE_BETA, false);
+        new Thread(() -> {
+            AppUpdate.Release found = null;
+            String error = null;
+            try { found = AppUpdate.check(app, beta); } catch (Exception failed) { error = failed.getClass().getSimpleName(); }
+            AppUpdate.Release release = found;
+            String failure = error;
+            runOnUiThread(() -> {
+                updating = false;
+                if (isFinishing() || isDestroyed()) return;
+                if (failure != null) Toast.makeText(this, "업데이트 정보를 가져오지 못했습니다 (" + failure + "). 인터넷 연결을 확인해주세요.", Toast.LENGTH_LONG).show();
+                else if (release == null) Toast.makeText(this, "최신 버전입니다.", Toast.LENGTH_SHORT).show();
+                else showPhrased(new AlertDialog.Builder(this).setTitle((release.beta ? "새 베타 버전 " : "새 버전 ") + release.version)
+                    .setMessage((release.beta ? "베타 버전은 오류가 있을 수 있습니다. " : "")
+                        + "새 버전을 내려받아 설치할까요? 설치 후 앱이 다시 시작되며 기기 로그 승인을 다시 해야 합니다.")
+                    .setPositiveButton("업데이트", (dialog, which) -> installUpdate(release))
+                    .setNeutralButton("변경 사항 보기", (dialog, which) -> {
+                        try { startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(release.pageUrl()))); }
+                        catch (ActivityNotFoundException missing) { Toast.makeText(this, "브라우저를 열 수 없습니다.", Toast.LENGTH_SHORT).show(); }
+                    })
+                    .setNegativeButton("나중에", null));
+            });
+        }, "PadUpdateCheck").start();
+    }
+
+    private void installUpdate(AppUpdate.Release release) {
+        if (!getPackageManager().canRequestPackageInstalls()) {
+            Toast.makeText(this, "이 앱의 설치 허용을 켠 뒤 업데이트 확인을 다시 눌러주세요.", Toast.LENGTH_LONG).show();
+            startActivity(new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:" + getPackageName())));
+            return;
+        }
+        if (updating) return;
+        updating = true;
+        Toast.makeText(this, "새 버전을 내려받는 중입니다.", Toast.LENGTH_SHORT).show();
+        Context app = getApplicationContext();
+        new Thread(() -> {
+            String failure = null;
+            try { AppUpdate.install(app, release); }
+            catch (java.security.GeneralSecurityException mismatch) { failure = "내려받은 파일 검증에 실패했습니다. 다시 시도해주세요."; }
+            catch (Exception failed) { failure = "새 버전을 내려받지 못했습니다 (" + failed.getClass().getSimpleName() + ")."; }
+            String message = failure;
+            runOnUiThread(() -> {
+                updating = false;
+                if (message != null) Toast.makeText(app, message, Toast.LENGTH_LONG).show();
+            });
+        }, "PadUpdateInstall").start();
     }
 
     /** Only after an explicit switch change: one standard confirmation if no session is live. */
@@ -217,6 +286,8 @@ public final class SetupActivity extends Activity {
                 new android.text.style.StyleSpan(android.graphics.Typeface.BOLD), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
             .append("\n켜져 있으면 기본 바는 동작하지 않고, 전원 버튼에서 Breeno가 함께 열릴 수 있습니다. 원하는 경우에만 직접 실행하세요."), false);
         block(panel, "adb shell pm disable-user --user " + user + " com.heytap.speechassist", true);
+        block(panel, "명령을 실행하면 Android가 앱을 한 번 다시 시작합니다. 그 뒤 접근성이 꺼지거나 '작동하지 않음'으로 바뀌면, 접근성 설정에서 이 앱을 껐다가 다시 켜주세요."
+            + "\n\n명령이 권한 오류로 실패하면 개발자 옵션의 'Disable system optimization'을 켜고 다시 실행하세요. 이 항목은 시스템 언어가 English일 때만 보일 수 있습니다.", false);
         block(panel, "앱이 스스로 권한을 부여하거나 Breeno를 끄지 않습니다.", false);
         ScrollView scroll = new ScrollView(builder.getContext());
         scroll.addView(panel);
@@ -231,7 +302,7 @@ public final class SetupActivity extends Activity {
 
     /** Dialog paragraph; code=true renders a selectable, wrapping monospace box like a markdown code fence. */
     private void block(LinearLayout parent, CharSequence value, boolean code) {
-        TextView view = new TextView(parent.getContext());
+        TextView view = phrase(new TextView(parent.getContext()));
         view.setTextAppearance(android.R.style.TextAppearance_Material_Subhead);
         view.setText(value);
         if (code) {
@@ -249,8 +320,20 @@ public final class SetupActivity extends Activity {
         parent.addView(view, params);
     }
 
+    /** Korean wraps per character by default ("기기 로그 / 로"); phrase style keeps words together (Android 13+). */
+    private static <T extends TextView> T phrase(T view) {
+        if (Build.VERSION.SDK_INT >= 33) view.setLineBreakWordStyle(android.graphics.text.LineBreakConfig.LINE_BREAK_WORD_STYLE_PHRASE);
+        return view;
+    }
+
+    /** Dialog bodies get the same word-kept wrapping; the message view exists only once the dialog is shown. */
+    private static void showPhrased(AlertDialog.Builder builder) {
+        TextView message = builder.show().findViewById(android.R.id.message);
+        if (message != null) phrase(message);
+    }
+
     private TextView text(String value, int size) {
-        TextView view = new TextView(this);
+        TextView view = phrase(new TextView(this));
         view.setText(value); view.setTextSize(size);
         view.setPadding(0, dp(5), 0, dp(9));
         if (size == 14) { view.setTextColor(secondary); view.setLineSpacing(dp(2), 1f); } // 14sp = description, like the status card detail.
@@ -289,7 +372,7 @@ public final class SetupActivity extends Activity {
 
     private TextView cardRow(LinearLayout card, boolean divider) {
         if (divider) divider(card);
-        TextView view = new TextView(this);
+        TextView view = phrase(new TextView(this));
         view.setTextSize(14); view.setLineSpacing(dp(2), 1f);
         view.setPadding(0, dp(12), 0, dp(12));
         card.addView(view, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
@@ -315,7 +398,7 @@ public final class SetupActivity extends Activity {
     }
 
     private Switch toggle(String label, boolean checked, CompoundButton.OnCheckedChangeListener listener) {
-        Switch view = new Switch(this);
+        Switch view = phrase(new Switch(this));
         view.setText(label); view.setTextSize(18);
         view.setMinHeight(dp(56));
         view.setChecked(checked);
@@ -325,7 +408,7 @@ public final class SetupActivity extends Activity {
     }
 
     private void button(String label, Runnable action) {
-        Button view = new Button(this);
+        Button view = phrase(new Button(this));
         view.setText(label); view.setAllCaps(false);
         view.setOnClickListener(v -> action.run());
         section.addView(view, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
@@ -426,8 +509,122 @@ public final class SetupActivity extends Activity {
     }
 
     private void openAccessibility() {
-        Toast.makeText(this, "다운로드한 앱에서 Circle-to-Search Trigger을 켜주세요.", Toast.LENGTH_LONG).show();
-        startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS));
+        // The per-service details page needs a system permission (device: SecurityException), so the list with a hint.
+        Toast.makeText(this, "다운로드한 앱 → Circle-to-Search Trigger를 켜주세요.", Toast.LENGTH_LONG).show();
+        startActivity(freshSettings(Settings.ACTION_ACCESSIBILITY_SETTINGS));
+    }
+
+    /** ColorOS keeps "자동 실행" behind a system-only permission; open Settings with the exact path instead. */
+    private void openAutoStart() {
+        Toast.makeText(this, "설정 → 앱 → 자동 실행에서 Circle-to-Search Trigger를 켜주세요.", Toast.LENGTH_LONG).show();
+        startActivity(freshSettings(Settings.ACTION_SETTINGS));
+    }
+
+    private void openAppInfo() {
+        Toast.makeText(this, "배터리 사용량 → 백그라운드 활동 허용을 켜주세요.", Toast.LENGTH_LONG).show();
+        startActivity(freshSettings(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).setData(Uri.parse("package:" + getPackageName())));
+    }
+
+    /**
+     * A fresh Settings task, so the page named in the hint opens instead of whatever sub-page Settings was left on
+     * (device: the accessibility list reopened on "접근성 메뉴", the home page on an old Wi-Fi page).
+     */
+    private static Intent freshSettings(String action) {
+        return new Intent(action).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
+    }
+
+    /** ColorOS "백그라운드 활동 허용" puts the app on the battery-optimization allowlist; restriction is the opposite. */
+    private boolean backgroundLimited() {
+        return !getSystemService(PowerManager.class).isIgnoringBatteryOptimizations(getPackageName())
+            || getSystemService(ActivityManager.class).isBackgroundRestricted();
+    }
+
+    private boolean autoStartMissed() {
+        long bootedAt = System.currentTimeMillis() - SystemClock.elapsedRealtime();
+        try {
+            return BootRecovery.autoStartMissed(Settings.Global.getInt(getContentResolver(), Settings.Global.BOOT_COUNT, -1),
+                BootRecovery.capturedBoot(this), getPackageManager().getPackageInfo(getPackageName(), 0).lastUpdateTime, bootedAt);
+        } catch (android.content.pm.PackageManager.NameNotFoundException unavailable) { return false; }
+    }
+
+    private static final String AUTOSTART_CONFIRMED = "autostart_confirmed";
+
+    /** The user's own confirmation is the only "on" signal available; a later blocked boot clears it again. */
+    private void autoStartPrompt() {
+        showPhrased(new AlertDialog.Builder(this).setTitle("자동 실행")
+            .setMessage("설정 → 앱 → 자동 실행에서 Circle-to-Search Trigger가 켜져 있는지 확인해주세요.\n\n켜져 있다면 '켜져 있음'을 눌러 이 안내를 닫을 수 있습니다. 재부팅 때 자동 실행이 막힌 것이 확인되면 다시 알려드립니다.")
+            .setPositiveButton("설정 열기", (dialog, which) -> openAutoStart())
+            .setNeutralButton("켜져 있음", (dialog, which) -> { preferences.edit().putBoolean(AUTOSTART_CONFIRMED, true).apply(); refresh(); })
+            .setNegativeButton("닫기", null));
+    }
+
+    private static final String RECENT_LOCKED_AT = "recent_locked_at";
+
+    /**
+     * The card lock is unreadable too, but its absence is not: an unlocked app is killed by recents "모두 닫기" (even with
+     * the card hidden), which its own exit history records. Only the newest exit counts.
+     */
+    private boolean cleanupKilled() {
+        try {
+            for (android.app.ApplicationExitInfo exit : getSystemService(ActivityManager.class).getHistoricalProcessExitReasons(null, 0, 1))
+                return StatusPolicy.cleanupKill(exit.getReason(), exit.getDescription(), exit.getTimestamp(), preferences.getLong(RECENT_LOCKED_AT, 0));
+        } catch (RuntimeException unavailable) { }
+        return false;
+    }
+
+    private void recentLockPrompt() {
+        showPhrased(new AlertDialog.Builder(this).setTitle("최근 앱 정리 제외")
+            .setMessage("1. '지금 설정'을 누르면 이 화면이 최근 앱 목록에 표시됩니다.\n2. 최근 앱 화면에서 Circle-to-Search Trigger 이름을 눌러 '잠금'을 선택합니다.\n3. 필요하면 '최근 앱에 표시'를 다시 끕니다. 잠금은 유지됩니다.\n\n잠그지 않으면 '모두 닫기' 때 앱이 종료되어 기기 로그를 다시 승인해야 합니다.")
+            .setPositiveButton("지금 설정", (dialog, which) -> {
+                recentSwitch.setChecked(true);
+                Toast.makeText(this, "최근 앱 화면에서 이 앱 이름을 눌러 '잠금'을 선택해주세요.", Toast.LENGTH_LONG).show();
+            })
+            .setNeutralButton("잠갔음", (dialog, which) -> {
+                preferences.edit().putLong(RECENT_LOCKED_AT, System.currentTimeMillis()).apply(); refresh(); })
+            .setNegativeButton("닫기", null));
+    }
+
+    /** Lists missing prerequisites; each row opens where it is fixed. Changes no system setting. */
+    private void refreshWarnings() {
+        warnings.removeAllViews();
+        if (!BarService.granted(this))
+            warn("접근성이 꺼져 있습니다", "눌러서 Circle-to-Search Trigger를 켜주세요.", this::openAccessibility);
+        else if (!BarService.serviceRunning())
+            // Device: granting READ_LOGS over ADB kills the process ("changed gids"); Android then marks the service
+            // crashed and never rebinds it until the user toggles it.
+            warn("접근성이 작동하지 않습니다", "권한을 새로 받은 뒤 멈출 수 있습니다. 눌러서 Circle-to-Search Trigger를 껐다가 다시 켜주세요.", this::openAccessibility);
+        if (!BootRecovery.permitted(this))
+            warn("보안 설정 쓰기 권한이 없습니다", "재부팅 후 자동 복구와 ColorOS 기본 하단 바에 필요합니다. 눌러서 ADB 설정 안내 보기", this::adbHelp);
+        if (BarService.logsWanted(this) && !BarService.logsPermitted(this))
+            warn("기기 로그 권한이 없습니다", "ColorOS 기본 하단 바와 전원 버튼에 필요합니다. 눌러서 ADB 설정 안내 보기", this::adbHelp);
+        else if (BarService.logsWanted(this) && BarService.serviceRunning() && BarService.logState() == LogSession.OFF)
+            warn("기기 로그가 연결되지 않았습니다", "눌러서 접근 승인을 요청해주세요.", () -> {
+                BarService.requestApproval(this); status.postDelayed(this::refresh, 500); });
+        if (backgroundLimited())
+            warn("백그라운드 활동이 제한되어 있습니다", "앱이 종료될 수 있습니다. 눌러서 배터리 사용량 → 백그라운드 활동 허용", this::openAppInfo);
+        // ColorOS keeps "자동 실행" unreadable to apps (no app op or setting changes; provider and page need a system-only
+        // permission). So: a reminder until the user confirms it, and a hard warning whenever a boot proves it blocked.
+        if (autoStartMissed()) {
+            preferences.edit().remove(AUTOSTART_CONFIRMED).apply();
+            warn("이번 부팅에서 자동 실행이 차단되었습니다", "재부팅 후 접근성이 꺼질 수 있습니다. 설정 → 앱 → 자동 실행에서 이 앱을 켜주세요.", this::autoStartPrompt);
+        } else if (!preferences.getBoolean(AUTOSTART_CONFIRMED, false))
+            warn("자동 실행이 켜져 있는지 확인해주세요", "꺼져 있으면 재부팅 후 접근성이 꺼질 수 있습니다. 앱이 이 설정을 직접 읽을 수 없어 한 번 확인이 필요합니다.", this::autoStartPrompt);
+        if (cleanupKilled())
+            warn("최근 앱 정리로 앱이 종료되었습니다", "기기 로그를 다시 승인해야 합니다. 최근 앱에서 이 앱 카드를 잠가 두면 막을 수 있습니다. 눌러서 방법 보기", this::recentLockPrompt);
+        warnings.setVisibility(warnings.getChildCount() == 0 ? android.view.View.GONE : android.view.View.VISIBLE);
+    }
+
+    private void warn(String head, String detail, Runnable fix) {
+        TextView view = phrase(new TextView(this));
+        SpannableStringBuilder text = new SpannableStringBuilder();
+        span(text, "⚠ " + head, new AbsoluteSizeSpan(16, true), new StyleSpan(android.graphics.Typeface.BOLD));
+        span(text, "\n" + detail, new AbsoluteSizeSpan(14, true), new ForegroundColorSpan(secondary));
+        view.setText(text);
+        view.setLineSpacing(dp(2), 1f);
+        view.setPadding(0, dp(10), 0, dp(10));
+        view.setOnClickListener(v -> fix.run());
+        if (warnings.getChildCount() > 0) divider(warnings);
+        warnings.addView(view, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
     }
 
     private void refresh() {
@@ -455,18 +652,19 @@ public final class SetupActivity extends Activity {
             .append("\n전원  ").append(StatusPolicy.summary(preferences.getString(BarService.LAST_POWER, null), now));
         recentStatus.setText(recent);
         targetLabel.setText(preferences.getString(MainActivity.TARGET_LABEL, "서클 투 서치 (기본 · 빠른 실행)"));
+        refreshWarnings();
     }
 
     /** Read-only: the newest attempt per pathway as recorded locally; never claims a window appeared. */
     private void showAttempts() {
         long now = System.currentTimeMillis();
-        new AlertDialog.Builder(this).setTitle("최근 실행 기록")
+        showPhrased(new AlertDialog.Builder(this).setTitle("최근 실행 기록")
             .setMessage("[하단 · 연결 앱]\n" + StatusPolicy.detail(preferences.getString(BarService.LAST_BAR, null), now)
-                + "\n\n[전원 버튼 · 작은 Gemini]\n" + StatusPolicy.detail(preferences.getString(BarService.LAST_POWER, null), now)
+                + "\n\n[전원 버튼 · Gemini Assistant]\n" + StatusPolicy.detail(preferences.getString(BarService.LAST_POWER, null), now)
                 + "\n\n경로마다 마지막 1건만 이 기기에 저장하며 외부로 보내지 않습니다. 앱은 실행 요청 전달과 Gemini 요청 수락까지만 확인하며,"
                 + " 서클 투 서치나 Gemini 창이 실제로 떴는지는 확인하지 않습니다. Google 상태는 선택과 설치·사용 여부만 확인하며 실제 연결 상태는 알 수 없습니다."
                 + " 길게 눌렀는데 기록이 바뀌지 않았다면 입력이 감지되지 않았을 수 있으니 기기 로그 연결과 ColorOS 전원 버튼 음성 비서 호출 설정을 확인해보세요.")
-            .setPositiveButton("닫기", null).show();
+            .setPositiveButton("닫기", null));
     }
 
     /** Structural state only: a session counts as connected after a system-UID entry, never on own-UID output. */

@@ -296,11 +296,11 @@ public final class BarService extends AccessibilityService {
         // true = the system accepted the session request; it does not prove an assistant window appeared.
         Log.i("PadPower", "GeminiSession.launch returned " + started + " (request acceptance, window unverified)");
         if (started) attemptUpdate(this, LAST_POWER, powerAttempt, StatusPolicy.ACCEPTED,
-            rebound + " · 시스템이 Gemini 세션 요청을 수락함 · 작은 Gemini 창 표시는 확인하지 않음");
+            rebound + " · 시스템이 Gemini 세션 요청을 수락함 · Gemini Assistant 창 표시는 확인하지 않음");
         else attemptUpdate(this, LAST_POWER, powerAttempt, StatusPolicy.FAILED, rebound + " · " + (!VoiceRepair.ready(rebind)
             ? "Gemini 요청 안 함" : googleVoice(this) == StatusPolicy.GOOGLE_READY ? "시스템이 Gemini 세션 요청을 수락하지 않음"
             : "Google 음성 서비스 미선택 또는 사용 불가"));
-        if (!started) android.widget.Toast.makeText(this, "작은 Gemini를 열지 못했습니다.", android.widget.Toast.LENGTH_SHORT).show();
+        if (!started) android.widget.Toast.makeText(this, "Gemini Assistant를 열지 못했습니다.", android.widget.Toast.LENGTH_SHORT).show();
     }
 
     private void launchSearch() {

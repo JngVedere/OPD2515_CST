@@ -66,6 +66,13 @@ public final class LogTriggerHarness {
         for (int lid : new int[]{0, 1, 2, 4, 5, 7})
             check(kind(entry(lid, 1000, TIME, V, POWER_TAG, POWER_TEXT)) == LogTrigger.NONE, "Power marker outside the system buffer (lid " + lid + ") is rejected");
 
+        // Recents "모두 닫기" on an unlocked card: exit reason 13, description "o-kill(2)" (device exit-info).
+        check(StatusPolicy.cleanupKill(13, "[UNKNOWN] o-kill(2)", 2000, 0), "ColorOS cleanup kill as the app reads it is reported");
+        check(StatusPolicy.cleanupKill(13, "o-kill(2)", 2000, 0), "ColorOS cleanup kill as dumpsys shows it is reported");
+        check(!StatusPolicy.cleanupKill(13, "o-kill(2)", 2000, 3000), "A kill before the user locked the card is not reported");
+        check(!StatusPolicy.cleanupKill(16, "stop due to killDueToPackageUpdate", 2000, 0), "Package updates are not cleanup kills");
+        check(!StatusPolicy.cleanupKill(13, null, 2000, 0) && !StatusPolicy.cleanupKill(13, "lmk", 2000, 0), "Other system kills are not cleanup kills");
+
         // Observed OPD2515 after recents "clear all": system_server UserAwareMgr INFO line for Google's :interactor.
         String gsa = "com.google.android.googlequicksearchbox", killTag = "UserAwareMgr";
         String killed = "process killed: {pkgName='" + gsa + "', serviceName='', procName=" + gsa + ":interactor, pid=30058, uid=10371, appId=0, owner='null', flags='fg1', renderTid=0, hwuiTids=null, glTids=null, threadInfos=null, mVideoActivityList=[], mStates=0}";

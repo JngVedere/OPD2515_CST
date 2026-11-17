@@ -1,10 +1,13 @@
 # This repository publishes only the current Android app and its build/test docs.
 # Everything else in this working folder stays local by default.
+# Local implementation roadmap.
+/docs/roadmap.md
 /*
 !/.gitignore
 !/README.md
 !/HOW TO USE.MD
 !/App-Release.json
+!/App-Release-Beta.json
 !/Build-Release.ps1
 !/Test-AndroidRecovery.ps1
 !/Test-NativeBar.ps1

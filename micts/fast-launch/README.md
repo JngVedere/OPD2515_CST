@@ -2,7 +2,7 @@
 
 Android 앱 `dev.padhelper.fastcts`, 버전 **0.3.0 / 코드 18**입니다. 대상은 OPD2515 / ColorOS 17 CN / Android 17입니다. 사용자 설치·권한·앱 설정 열기는 [사용 가이드](../../HOW%20TO%20USE.MD)를 참고하세요.
 
-`GeminiSession.launch(Context)`는 현재 Google 음성 서비스의 일반 어시스턴트 세션을 요청합니다. Google의 모바일 어시스턴트를 Gemini로 설정해야 작은 Gemini 창이 열립니다. 전체 앱 실행이나 ASSIST intent로 대체하지 않습니다.
+`GeminiSession.launch(Context)`는 현재 Google 음성 서비스의 일반 어시스턴트 세션을 요청합니다. Google의 모바일 어시스턴트를 Gemini로 설정해야 Gemini Assistant 창이 열립니다. 전체 앱 실행이나 ASSIST intent로 대체하지 않습니다.
 
 0.3.0는 Google 선택 값이 정상이어도 내부 음성 서비스 연결이 끊겨 Gemini 요청만 수락되는 경우를 복구합니다. `VoiceRepair`는 사용 시작·전원 옵션 켜기·수동 재연결 버튼에서만, 보안 설정 쓰기 권한과 기존 Google 선택을 확인한 뒤 같은 서비스를 잠시 해제하고 복원합니다. 원래 값은 먼저 저장하고, 도중 종료·권한 회수·다른 어시스턴트 선택을 처리하며 중복 요청을 병렬 실행하지 않습니다. 전원 이벤트 자체에서는 재연결하지 않습니다. 설정 화면의 상태 반영도 사용자 입력과 구분합니다.
 
@@ -75,7 +75,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Build-Release.ps1
 
 ## 검증과 제한
 
-0.2.7은 OPD2515에서 작은 Gemini 팝업, 기본 하단 바 CTS, 기존 영역 방식과 전원 기능의 병행, 전원 기능 끄기, 로그 연결 종료를 확인했습니다. USB를 분리한 상태로 재부팅한 뒤 첫 잠금 해제에서 승인창이 자동 표시되고, 사용자 승인 한 번으로 두 기능이 복구되는 것도 확인했습니다. 앱을 직접 열거나 ADB 권한을 재부여하지 않았습니다.
+0.2.7은 OPD2515에서 Gemini Assistant 팝업, 기본 하단 바 CTS, 기존 영역 방식과 전원 기능의 병행, 전원 기능 끄기, 로그 연결 종료를 확인했습니다. USB를 분리한 상태로 재부팅한 뒤 첫 잠금 해제에서 승인창이 자동 표시되고, 사용자 승인 한 번으로 두 기능이 복구되는 것도 확인했습니다. 앱을 직접 열거나 ADB 권한을 재부여하지 않았습니다.
 
 자동 검사는 `Test-NativeBar.ps1` 230개, `Test-AndroidRecovery.ps1` 77 + 56 + 31개, `Test-Release.ps1` 47개가 통과했습니다. 대기 후 재호출은 약 55초 구간에서 확인했으며 장시간 배터리와 다른 기기·펌웨어에서의 동작은 보장하지 않습니다. Android의 새 로그 연결 승인을 생략하거나 대신 누르지 않습니다.
 

@@ -63,8 +63,8 @@ final class StatusPolicy {
         if (cts && google != GOOGLE_READY) return where + " 감지 중 · 서클 투 서치: " + googleProblem(google);
         if (nativeMode && gestureBar != GESTURE_SHOWN && gestureBar != GESTURE_TASKBAR)
             return where + " 감지 중 · 제스처 안내 막대 표시 여부 확인 불가 (설정 → 시스템 및 업데이트 → 시스템 탐색에서 숨기기가 꺼져 있는지 확인)";
-        return "사용 중 · " + where + " 감지 중 (길게 누르면 연결 앱 실행 요청" + (cts ? CONFIG_ONLY : "") + ")"
-            + (nativeMode && gestureBar == GESTURE_TASKBAR ? " · 작업 표시줄 켜짐: 작업 표시줄 하단 바 기준" : "");
+        return "사용 중 · " + where + " 감지 중" + (cts ? " · Google 설정됨, 실제 연결 상태는 확인 불가" : "")
+            + (nativeMode && gestureBar == GESTURE_TASKBAR ? " · 작업 표시줄 기준" : "");
     }
 
     /** Power long press -> small Gemini readiness. Breeno is not a prerequisite here; WSS only enables the per-press rebind. */
@@ -76,7 +76,7 @@ final class StatusPolicy {
         if (!logsPermitted) return "기기 로그 권한 필요 · 최초 ADB 설정 안내 참고";
         if (!logActive) return logWaiting ? "기기 로그 확인 창에서 허용 대기" : "기기 로그 승인 필요 · 기기 로그 접근 승인 요청을 눌러주세요";
         if (google != GOOGLE_READY) return "Gemini 요청 불가 · " + googleProblem(google);
-        return "감지 중 · 길게 누르면 작은 Gemini 요청" + CONFIG_ONLY
+        return "감지 중 · 길게 누르면 Gemini Assistant 요청" + CONFIG_ONLY
             + (secureWrite ? "" : " (보안 설정 쓰기 권한 없음: Google 재연결 생략)");
     }
 
@@ -90,6 +90,18 @@ final class StatusPolicy {
         if (!active) return "기기 로그 연결 끊김";
         if (age < 0 || age > LogTrigger.POWER_LAUNCH_AGE) return "요청 시간 초과 (" + age + "ms)";
         return null;
+    }
+
+    /** ApplicationExitInfo.REASON_OTHER ("OTHER KILLS BY SYSTEM"). */
+    static final int EXIT_OTHER = 13;
+
+    /**
+     * The newest exit was ColorOS's cleanup kill (device: recents "모두 닫기" records reason 13 and, as the app reads it,
+     * description "[UNKNOWN] o-kill(2)" unless the recents card is locked) and it happened after the user last said the
+     * card is locked.
+     */
+    static boolean cleanupKill(int reason, String description, long at, long lockedAt) {
+        return reason == EXIT_OTHER && description != null && description.contains("o-kill") && at > lockedAt;
     }
 
     /** Starts the newest record for one pathway; any older record (and its late callbacks) is superseded. */

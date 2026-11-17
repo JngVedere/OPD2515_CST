@@ -1,4 +1,4 @@
-﻿param([string]$Sdk = "$env:LOCALAPPDATA/Android/Sdk")
+﻿param([string]$Sdk = "$env:LOCALAPPDATA/Android/Sdk", [switch]$Beta)
 $ErrorActionPreference = 'Stop'
 $version = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'App-Version.json') -Raw -Encoding UTF8 | ConvertFrom-Json
 if ($version.Version -notmatch '^\d+\.\d+\.\d+(?:[-.A-Za-z0-9]+)?$' -or [int]$version.VersionCode -lt 1) { throw 'Invalid Android app version' }
@@ -62,8 +62,10 @@ if (-not ($metadata -match ("^package: name='dev\.padhelper\.fastcts' versionCod
     throw 'Signed APK package/version does not match App-Version.json'
 }
 if ($metadata -match '^launchable-activity:') { throw 'The app must have no launcher icon.' }
-# READ_LOGS is granted once over ADB; no foreground-service, overlay, or network permission is allowed.
-$allowed = @('android.permission.RECEIVE_BOOT_COMPLETED','android.permission.WRITE_SECURE_SETTINGS','android.permission.READ_LOGS')
+# READ_LOGS is granted once over ADB; INTERNET/REQUEST_INSTALL_PACKAGES serve only the manual update check (AppUpdate).
+# No foreground-service or overlay permission is allowed.
+$allowed = @('android.permission.RECEIVE_BOOT_COMPLETED','android.permission.WRITE_SECURE_SETTINGS','android.permission.READ_LOGS',
+    'android.permission.INTERNET','android.permission.REQUEST_INSTALL_PACKAGES')
 foreach ($line in $metadata) {
     if ($line -match "^uses-permission(?:-sdk-\d+)?: name='([^']+)'") {
         if ($Matches[1] -notin $allowed) { throw "Unexpected permission: $($Matches[1])" }
@@ -82,6 +84,7 @@ $release = [ordered]@{
     FileName = 'Circle-to-Search-Trigger-' + $version.Version + '.apk'
     SHA256 = $hash.Hash.ToLowerInvariant()
 }
-$releasePath = Join-Path $PSScriptRoot '../../App-Release.json'
+# Beta builds publish their metadata separately; the in-app updater reads it only when "베타 버전도 확인" is on.
+$releasePath = Join-Path $PSScriptRoot $(if ($Beta) { '../../App-Release-Beta.json' } else { '../../App-Release.json' })
 [IO.File]::WriteAllText($releasePath, ($release | ConvertTo-Json) + "`r`n", (New-Object Text.UTF8Encoding($false)))
 $hash
