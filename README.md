@@ -4,10 +4,12 @@
 
 **오포 패드 미니에서 Circle to Search와 Gemini Assistant를 사용해보세요.**
 
+**🪶 APK 약 105KB — 1MB 미만의 초경량 앱입니다.** 상주 알림이나 백그라운드 폴링 없이 동작하며, 설정 화면을 닫으면 메모리 사용량도 약 50MB 수준입니다.
+
 OPPO Pad Mini에서 Google 서클 투 서치를 편하게 열 수 있도록 도와주는 Android 앱입니다. 서클 투 서치 대신 자주 사용하는 다른 앱을 연결할 수도 있습니다. 루팅 없이 사용할 수 있으며, MiCTS 없이 서클 투 서치를 직접 실행합니다.
 기존에 있던 다른 앱 대비 반응성과 User Experience에서의 자연스러움을 최대한 고려한 앱입니다.
 
-[**APK 다운로드**](https://github.com/JngVedere/OPD2515_CST/releases/latest)
+[**APK 다운로드 (약 105KB)**](https://github.com/JngVedere/OPD2515_CST/releases/latest)
 
 ## 주요 기능
 
