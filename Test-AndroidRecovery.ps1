@@ -885,14 +885,14 @@ $expectedExported = @('.BarService|android.permission.BIND_ACCESSIBILITY_SERVICE
     '.SetupActivity|', '.SetupCommandActivity|android.permission.DUMP') | Sort-Object
 $drawerAlias = $manifest.SelectSingleNode('/manifest/application/activity-alias[@android:name=".DrawerLaunch"]',$namespaces)
 $mainSource = $allSources['MainActivity.java']
-if (($exported -join ',') -cne ($expectedExported -join ',') -or -not $drawerAlias -or $drawerAlias.GetAttribute('enabled',$androidNs) -ne 'false' -or
+if (($exported -join ',') -cne ($expectedExported -join ',') -or -not $drawerAlias -or $drawerAlias.GetAttribute('enabled',$androidNs) -ne 'true' -or
     $drawerAlias.GetAttribute('targetActivity',$androidNs) -ne '.MainActivity' -or
     $mainSource -notmatch 'int source = drawer \? 0 : intent\.getIntExtra\(SOURCE, 0\);' -or
     $mainSource -notmatch 'attempt = drawer \? 0 : intent\.getLongExtra\(ATTEMPT, 0\);' -or
     $mainSource -notmatch 'boolean twice = !drawer && intent\.getBooleanExtra\(DOUBLE, false\);' -or
     $mainSource -notmatch 'boolean forceCts = drawer \|\| source == TILE_SEARCH \|\| source == TILE_ASSISTANT;' -or
     $mainSource -notmatch 'boolean direct = drawer \|\| !intent\.getBooleanExtra\(DIRECT_TRIED, false\);') {
-    throw 'Exported components: fixed list with bind permissions; drawer alias disabled by default and blind to extras'
+    throw 'Exported components: fixed list with bind permissions; drawer alias shown by default and blind to extras'
 }
 $securityChecks++
 $barService = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'micts/fast-launch/BarService.java'))

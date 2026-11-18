@@ -294,7 +294,8 @@ public final class SetupActivity extends Activity {
 
         section("바로 실행");
         ComponentName drawer = new ComponentName(this, MainActivity.DRAWER);
-        toggle("앱 서랍에 표시", getPackageManager().getComponentEnabledSetting(drawer) == PackageManager.COMPONENT_ENABLED_STATE_ENABLED,
+        // Untouched (DEFAULT) follows the manifest, which shows the icon; only an explicit hide reads as off.
+        toggle("앱 서랍에 표시", getPackageManager().getComponentEnabledSetting(drawer) != PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
             (view, checked) -> getPackageManager().setComponentEnabledSetting(drawer, checked
                 ? PackageManager.COMPONENT_ENABLED_STATE_ENABLED : PackageManager.COMPONENT_ENABLED_STATE_DISABLED, PackageManager.DONT_KILL_APP));
         text("앱 서랍의 아이콘을 누르면 연결 앱 설정과 상관없이 서클 투 서치가 열립니다. 이 설정 화면은 아이콘을 길게 눌러 '설정'으로 엽니다. 끄면 앱 서랍에서 아이콘이 사라집니다.", 14);

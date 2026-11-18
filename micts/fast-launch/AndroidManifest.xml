@@ -31,10 +31,10 @@
         <receiver android:name=".AppUpdate$Result" android:exported="false" />
         <activity android:name=".MainActivity" android:exported="false"
             android:excludeFromRecents="true" android:taskAffinity="" />
-        <!-- App drawer icon: off until the user turns on "앱 서랍에 표시" (PackageManager component state). A tap opens
+        <!-- App drawer icon: shown by default; "앱 서랍에 표시" hides it (PackageManager component state). A tap opens
              Circle to Search only (MainActivity ignores every extra on this path); settings only via the long-press shortcut. -->
         <activity-alias android:name=".DrawerLaunch" android:targetActivity=".MainActivity"
-            android:enabled="false" android:exported="true" android:label="OpdCTS"
+            android:enabled="true" android:exported="true" android:label="OpdCTS"
             android:excludeFromRecents="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
