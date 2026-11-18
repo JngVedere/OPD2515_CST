@@ -57,6 +57,17 @@ Circle-to-Search Trigger의 모든 공개 릴리즈 기록입니다. 최신 버�
 #### 라이선스
 - 이 버전부터 GNU GPL-3.0으로 배포합니다. 설정 화면 맨 아래 '오픈소스 라이선스'에서 고지를 볼 수 있습니다.
 
+#### 스크린샷
+| | |
+| --- | --- |
+| **앱 서랍 아이콘 (OpdCTS)**<br><img src="screenshots/0.3.6/drawer.png" width="360"> | **아이콘 길게 누르기 → 설정**<br><img src="screenshots/0.3.6/drawer-longpress.png" width="360"> |
+| **아이콘 탭 → 서클 투 서치**<br><img src="screenshots/0.3.6/drawer-tap-cts.png" width="360"> | **빠른 설정 타일 Search / Assistant**<br><img src="screenshots/0.3.6/qs-tiles.png" width="360"> |
+| **Assistant 타일 → Gemini Assistant**<br><img src="screenshots/0.3.6/tile-assistant.png" width="360"> | **3버튼 홈 버튼 길게 누르기 → 서클 투 서치**<br><img src="screenshots/0.3.6/3button-home-long-press-cts.png" width="360"> |
+| **Detail / Compact 전환**<br><img src="screenshots/0.3.6/settings-top-compact.png" width="360"> | **바로 실행 설정**<br><img src="screenshots/0.3.6/settings-quick-launch.png" width="360"> |
+| **터치 영역 위치·크기와 화면 방향 표시**<br><img src="screenshots/0.3.6/settings-touch-area.png" width="360"> | **값을 눌러 숫자로 입력**<br><img src="screenshots/0.3.6/touch-area-typed-input.png" width="360"> |
+| **Gemini 요청 전 대기**<br><img src="screenshots/0.3.6/settings-power-gemini-wait.png" width="360"> | **앱 안에서 업데이트**<br><img src="screenshots/0.3.6/settings-update.png" width="360"> |
+| **실험적 기능: 전원 버튼 두 번 누르기**<br><img src="screenshots/0.3.6/advanced-experimental.png" width="360"> | **오픈소스 라이선스**<br><img src="screenshots/0.3.6/open-source-licenses.png" width="360"> |
+
 ---
 
 ## [v0.3.5 (Beta)](https://github.com/JngVedere/OPD2515_CST/releases/tag/v0.3.5) · 2026-11-17 · 베타

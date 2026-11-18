@@ -8,6 +8,8 @@
 !/RELEASES.md
 !/LICENSE
 !/NOTICE
+!/screenshots/
+!/screenshots/**
 !/HOW TO USE.MD
 !/App-Release.json
 !/App-Release-Beta.json
