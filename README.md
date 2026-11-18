@@ -4,21 +4,25 @@
 
 **오포 패드 미니에서 Circle to Search와 Gemini Assistant를 사용해보세요.**
 
-OPPO Pad Mini에서 Google 서클 투 서치를 편하게 열 수 있도록 도와주는 Android 앱입니다. 서클 투 서치 대신 자주 사용하는 다른 앱을 연결할 수도 있습니다. 루팅 없이 사용할 수 있으며, 앱서랍에는 아이콘이 표시되지 않습니다.
+OPPO Pad Mini에서 Google 서클 투 서치를 편하게 열 수 있도록 도와주는 Android 앱입니다. 서클 투 서치 대신 자주 사용하는 다른 앱을 연결할 수도 있습니다. 루팅 없이 사용할 수 있으며, MiCTS 없이 서클 투 서치를 직접 실행합니다.
 기존에 있던 다른 앱 대비 반응성과 User Experience에서의 자연스러움을 최대한 고려한 앱입니다.
 
 [**APK 다운로드**](https://github.com/JngVedere/OPD2515_CST/releases/latest)
 
 ## 주요 기능
 
-- 하단 중앙을 길게 눌러 서클 투 서치 실행
+- 하단 중앙을 길게 눌러 서클 투 서치 실행 (3버튼 탐색에서는 홈 버튼 길게 누르기)
 - **하단 영역 인식**과 **ColorOS 기본 하단 바** 중 실행 방식 선택
-- 하단 인식 범위 미리 보기
+- 하단 인식 영역의 위치·크기, 길게 누르기 인식 시간 조절 (가로/세로 화면 따로)
+- 앱 서랍 아이콘 **OpdCTS** — 누르면 서클 투 서치, 길게 눌러 '설정'
+- 빠른 설정 타일 **Search**(서클 투 서치) / **Assistant**(Gemini Assistant)
 - 최근 앱 목록에서 설정 화면 숨기기·보이기
 - 길게 눌렀을 때 실행할 앱 직접 선택
 - 빠른 설정 타일로 사용 켜기·끄기 및 설정 열기
 - 선택 사항으로 재부팅 후 접근성 자동 복구
 - 전원 버튼 길게 눌러 Gemini Assistant 호출
+- 앱 안에서 업데이트 확인과 설치
+- (실험적) 전원 버튼 두 번 눌러 앱 실행
 
 ## 사용 환경/준비물
 
@@ -28,7 +32,8 @@ OPPO Pad Mini에서 Google 서클 투 서치를 편하게 열 수 있도록 도�
 
 - **[Google](https://play.google.com/store/apps/details?id=com.google.android.googlequicksearchbox)** — Google LLC에서 배포하는 앱
 - **[Google Speech Recognition & Synthesis](https://play.google.com/store/search?q=google+speech+services&c=apps)** - 호환성을 위해 권장
-- **[MiCTS 2.6](https://github.com/parallelcc/MiCTS/releases/tag/v2.6)** — 서클 투 서치 실행에 필요
+
+0.3.6부터 **MiCTS는 필요 없습니다.** 설치되어 있으면 직접 실행이 실패했을 때만 예비로 사용합니다.
 
 Google 서비스가 없는 기기는 먼저 기기의 Google 서비스와 Play 스토어를 준비해주세요. 
 
@@ -61,15 +66,15 @@ Google 서비스가 없는 기기는 먼저 기기의 Google 서비스와 Play �
    
 
 **최근 앱 정리 제외 설정 (필수)**
-1. 앱 내 **최근 앱 정리 제외 설정** 누른 후 **`최근 앱 목록(홈 버튼) → 'Circle-to-Search' 앱 이름 누르기 → 잠금`** 후 앱 내 **`'최근 앱에 표시' 끄기`**
+1. 앱 내 **최근 앱 정리 제외 설정** 누른 후 **`최근 앱 목록(홈 버튼) → 'Circle-to-Search..' 앱 이름 누르기 → 잠금`** 후 앱 내 **`'최근 앱에 표시' 끄기`**
 
    
 
 ### 하단 영역 인식
 
-1. [다운로드 페이지](https://github.com/JngVedere/OPD2515_CST/releases/latest)에서 **`Bottom-Search`로 시작하는 `.apk` 파일**을 받습니다.
+1. [다운로드 페이지](https://github.com/JngVedere/OPD2515_CST/releases/latest)에서 **`Circle-to-Search-Trigger`로 시작하는 `.apk` 파일**을 받습니다.
 2. 태블릿에서 APK를 열어 설치합니다. 설치가 차단되면 해당 파일을 연 앱의 **이 출처 허용**을 켭니다.
-3. 태블릿 **`설정 → 앱 → 앱 관리 → 'Circle-to-Search Trigger' → 앱 추가 설정`** 경로로 Circle-to-Search Trigger 설정을 엽니다.
+3. 앱 서랍의 **OpdCTS** 아이콘을 길게 눌러 **'설정'**을 선택해 Circle-to-Search Trigger 설정을 엽니다. (또는 태블릿 **`설정 → 앱 → 앱 관리 → 'Circle-to-Search Trigger' → 앱 추가 설정`**)
 4. **연결 앱 → 기본 어시스턴트 설정**에서 Google을 선택 및 **`앱 선택 → 서클 투 서치`**, 이후 **화면 및 앱 데이터 사용**을 **허용**합니다.
 5. 태블릿 **`설정 → 앱 → 앱 관리 → 'Circle-to-Search Trigger' → 권한 → 우측 상단의 ... → 권한 제한 해제`** 경로로 Circle-to-Search Trigger 설정을 엽니다.
 6. 앱 내 **접근성 설정**에서 **다운로드한 앱 → Circle-to-Search Trigger**을 켭니다.
@@ -100,7 +105,7 @@ adb shell pm grant --user 0 dev.padhelper.fastcts android.permission.READ_LOGS
 
 ### Gemini Assistant 사용하기
 1. **ColorOS 기본 하단 바 사용하기** 7단계까지 진행해주세요
-2. 앱 내 **`전원 버튼 → 전원 버튼 길게 눌러 작은 Gemini 열기`** 활성화
+2. 앱 내 **`전원 버튼 → 전원 버튼 길게 눌러 Gemini Assistant 열기`** 활성화
 3. 앱 내 상단의 **`사용 시작`** 클릭
 4. 앱의 연결 상태를 확인한 뒤 앱 내 **설정 닫기**를 눌러 닫습니다.
 
@@ -114,7 +119,13 @@ Breeno를 비활성화하면 전원 버튼 등으로 Breeno를 여는 기능에�
 
 | 설정 | 설명 |
 | --- | --- |
-| **인식 영역 표시** | 설정 화면에서 하단 인식 범위를 파란색으로 보여줍니다. 설정을 벗어나면 다시 투명해집니다. 영역 크기를 바꾸는 기능은 아닙니다. |
+| **인식 영역 표시** | 설정 화면에서 하단 인식 범위를 파란색으로 보여줍니다. 설정을 벗어나면 다시 투명해집니다. |
+| **위치와 크기 / 길게 누르기 인식 시간** | 하단 인식 영역의 위치·크기와 인식 시간을 조절합니다. 가로/세로 화면 값을 따로 저장하며, 값을 눌러 숫자로 직접 입력할 수 있습니다. |
+| **Gemini 요청 전 대기** | 전원 버튼으로 Gemini Assistant가 가끔 뜨지 않으면 늘려주세요. |
+| **앱 서랍에 표시** | 앱 서랍의 OpdCTS 아이콘을 보이거나 숨깁니다. 기본값은 켜짐입니다. |
+| **Search / Assistant 타일** | 빠른 설정에서 서클 투 서치와 Gemini Assistant를 바로 엽니다. **바로 실행**에서 추가합니다. |
+| **Detail / Compact** | 설정 화면 오른쪽 위에서 항목 아래 부가 설명을 보이거나 숨깁니다. |
+| **업데이트 확인** | GitHub에서 새 버전을 확인하고 앱 안에서 설치합니다. 설정을 열 때 자동으로 확인할 수도 있습니다. |
 | **최근 앱에 표시** | Circle-to-Search Trigger 설정 화면을 최근 앱 목록에 보이거나 숨깁니다. 앱서랍 아이콘에는 영향을 주지 않습니다. |
 | **앱 선택** | 길게 눌렀을 때 실행할 앱을 고릅니다. 서클 투 서치로 돌아가려면 기본값을 선택하세요. |
 | **사용 시작 / 끄기** | 선택한 실행 방식을 켜거나 끕니다. |
@@ -122,13 +133,14 @@ Breeno를 비활성화하면 전원 버튼 등으로 Breeno를 여는 기능에�
 
 ## 설정 다시 열기
 
-앱서랍 아이콘을 숨긴 앱이므로 다음 경로 중 하나로 설정을 열 수 있습니다. 메뉴 이름은 기기 설정에 따라 조금 다를 수 있습니다.
+다음 경로 중 하나로 설정을 열 수 있습니다. 메뉴 이름은 기기 설정에 따라 조금 다를 수 있습니다.
 
+- **앱 서랍의 OpdCTS 아이콘 길게 누르기 → 설정** (아이콘을 누르기만 하면 서클 투 서치가 열립니다)
 - **설정 → 앱 → 앱 관리 → Circle-to-Search Trigger → 앱 추가 설정**
 - **설정 → 접근성 → 다운로드한 앱 → Circle-to-Search Trigger → 설정**
 - **빠른 설정의 Circle-to-Search Trigger 타일 길게 누르기**
 
-앱 설정의 **빠른 설정에 버튼 추가**를 눌러 타일을 추가해두면 편리합니다. 최근 앱에서 숨겨도 위 경로로 다시 열 수 있습니다.
+앱 설정의 **빠른 설정에 켜기/끄기 타일 추가**를 눌러 타일을 추가해두면 편리합니다. 앱 서랍 아이콘이나 최근 앱에서 숨겨도 위 경로로 다시 열 수 있습니다.
 
 ## 알려진 한계
 
@@ -148,9 +160,9 @@ A1.Circle-to-Search Trigger의 접근성이 켜져 있는지 확인하고, 앱 �
 
 A2.먼저 태블릿 잠금을 한 번 풀어주세요. 하단 영역 방식은 접근성 상태와 자동 복구 옵션을 확인하고, 기본 바 방식은 앱 안내의 ADB 활성화 명령을 다시 실행해주세요.
 
-**Q3.CTS를 호출할 때 ‘Trigger failed’가 떠요.**
+**Q3.‘서클 투 서치를 열지 못했습니다’가 떠요.**
 
-A3.Google이 기본 디지털 어시스턴트로 선택되어 있는지, 화면 텍스트·스크린샷 사용이 허용되어 있는지 확인해주세요. 필요한 음성 인식 서비스도 설치한 뒤 MiCTS를 직접 열어보세요.
+A3.Google이 기본 디지털 어시스턴트로 선택되어 있는지, 화면 텍스트·스크린샷 사용이 허용되어 있는지 확인해주세요. 앱 내 **연결 앱 → 기본 어시스턴트 설정**에서 바로 확인할 수 있습니다.
 
 **Q4.‘화면에 관해 물어보기’로 넘어갈 때 느려요.**
 
@@ -158,17 +170,28 @@ A4.Google 앱과 화면 내용에 따라 전환이 지연될 수 있습니다. C
 
 **Q5.앱 삭제 후 기본 상태로 복원하려면 어떻게 하나요?**
 
-A5. adb로 일부 옵션을 복원해야 합니다. 
+A5. 삭제하기 전에 앱 내 **끄기**를 먼저 누르고, **전원 버튼 두 번 눌러 앱 실행**을 켜두었다면 반드시 끈 뒤 삭제해주세요. 그래도 남은 옵션은 adb로 복원해야 합니다. 
    USB 디버깅을 허용한 태블릿을 ADB가 준비된 컴퓨터에 연결합니다. (태블릿 : **개발자 옵션 → USB 디버깅 활성화**, PC : [ADB](https://developer.android.com/tools/releases/platform-tools?hl=ko))
    이후 아래 명령어를 입력해주면 기본 상태로 복원됩니다
    ```POWERSHELL
    adb shell pm enable --user 0 com.heytap.speechassist
    adb shell settings --user 0 put secure oplus_gesture_handle_cui_enable 1
+   adb shell settings delete global power_button_short_press
+   adb shell settings delete global power_button_double_press
+   ```
+
+**Q6.다른 기기에서 ‘기기 보호를 위해 앱 차단됨’이 뜨며 설치되지 않아요.**
+
+A6.Google Play Protect가 접근성 권한을 요청하는 앱의 직접 설치(브라우저·파일 관리자)를 막는 경우입니다. 컴퓨터에서 ADB로 설치하면 대부분 해결됩니다.
+   ```POWERSHELL
+   adb install Circle-to-Search-Trigger-0.3.6.apk
    ```
 
 ## 권한 안내
 
 **접근성**은 하단 인식 영역과 실행 기능을 유지하는 데 사용합니다. Circle-to-Search Trigger 자체는 화면 내용을 읽거나 캡처하지 않습니다. 서클 투 서치의 화면 인식과 검색은 Google 앱이 처리합니다.
+
+**인터넷 / 앱 설치 요청**은 앱 안의 업데이트 확인과 설치에만 사용합니다. GitHub에서 새 버전 정보와 APK만 받으며, 기기 정보는 보내지 않습니다.
 
 **보안 설정 쓰기**는 앱이 시스템 설정을 바꿀 수 있는 강한 권한입니다. 재부팅 후 접근성 자동 복구와 하단 바 제스처 전환에 사용합니다. ColorOS 기본 바 방식에서는 이 권한과 별도 ADB 활성화가 필요합니다.
 
@@ -176,8 +199,14 @@ A5. adb로 일부 옵션을 복원해야 합니다.
 
 ## 관련 프로젝트
 
-- [MiCTS](https://github.com/parallelcc/MiCTS) — 서클 투 서치 실행
+- [MiCTS](https://github.com/parallelcc/MiCTS) — 서클 투 서치 호출 방식의 참고 프로젝트 (설치 불필요)
 - [ColorGoogle](https://github.com/joeyandu/ColorGoogle) — ColorOS 기본 바 실행 방식의 참고 프로젝트
+- [MindTrigger Assist](https://github.com/evokermc098-coder/MindTriggerAssist) — 기기 로그 연결 방식의 참고 프로젝트
+
+## 라이선스 · 릴리즈 기록
+
+0.3.6부터 [GNU GPL-3.0](LICENSE)으로 배포합니다. 참고 프로젝트와 포함된 라이브러리 고지는 [NOTICE](NOTICE)에 있습니다.
+버전별 변경 사항은 [RELEASES.md](RELEASES.md)에서 볼 수 있습니다.
 
 ## AI 도구 활용
 
