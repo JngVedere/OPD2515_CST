@@ -875,8 +875,9 @@ if (-not $launcher -or $launcher.GetAttribute('exported',$namespaces.LookupNames
     throw 'Internal touch-trigger activity must not be exported'
 }
 $securityChecks++
-# 0.3.6: every exported component is listed here. Services need their system bind permission; the drawer alias ships
-# disabled and MainActivity ignores every extra when started through it (any app can start a launcher entry).
+# Every exported component is listed here. Services need their system bind permission. The drawer alias (shown by
+# default) targets the windowless DrawerActivity, which never reads its intent (any app can start a launcher entry);
+# only DrawerActivity may hand MainActivity the internal drawer fallback.
 $androidNs = $namespaces.LookupNamespace('android')
 $exported = @($manifest.SelectNodes('/manifest/application/*',$namespaces) | Where-Object { $_.GetAttribute('exported',$androidNs) -eq 'true' } |
     ForEach-Object { $_.GetAttribute('name',$androidNs) + '|' + $_.GetAttribute('permission',$androidNs) } | Sort-Object)
@@ -886,12 +887,19 @@ $expectedExported = @('.BarService|android.permission.BIND_ACCESSIBILITY_SERVICE
 $drawerAlias = $manifest.SelectSingleNode('/manifest/application/activity-alias[@android:name=".DrawerLaunch"]',$namespaces)
 $mainSource = $allSources['MainActivity.java']
 if (($exported -join ',') -cne ($expectedExported -join ',') -or -not $drawerAlias -or $drawerAlias.GetAttribute('enabled',$androidNs) -ne 'true' -or
-    $drawerAlias.GetAttribute('targetActivity',$androidNs) -ne '.MainActivity' -or
+    $drawerAlias.GetAttribute('targetActivity',$androidNs) -ne '.DrawerActivity' -or
+    $manifest.SelectSingleNode('/manifest/application/activity[@android:name=".DrawerActivity"]',$namespaces).GetAttribute('exported',$androidNs) -ne 'false' -or
+    $manifest.SelectSingleNode('/manifest/application/activity[@android:name=".DrawerActivity"]',$namespaces).GetAttribute('theme',$androidNs) -ne '@android:style/Theme.NoDisplay' -or
+    $allSources['DrawerActivity.java'] -match 'getIntent\(' -or $allSources['DrawerActivity.java'] -notmatch '(?s)postDelayed\(\(\) -> \{\s*if \(!CtsSession\.open\(app\)\) fallback\(app\);\s*\}, LAUNCHER_SETTLE_MS\);\s*\}\s*finish\(\);' -or
+    # The tap's target comes only from the saved choice; unknown values fall back to Circle to Search.
+    $allSources['DrawerActivity.java'] -notmatch 'return value == ASSISTANT \|\| value == SETTINGS \? value : CTS;' -or
+    @($allSources.Keys | Where-Object { $_ -ne 'MainActivity.java' -and $allSources[$_] -match 'DRAWER_FALLBACK' }) -join ',' -cne 'DrawerActivity.java' -or
+    $mainSource -notmatch 'boolean drawer = intent\.getBooleanExtra\(DRAWER_FALLBACK, false\);' -or
     $mainSource -notmatch 'int source = drawer \? 0 : intent\.getIntExtra\(SOURCE, 0\);' -or
     $mainSource -notmatch 'attempt = drawer \? 0 : intent\.getLongExtra\(ATTEMPT, 0\);' -or
     $mainSource -notmatch 'boolean twice = !drawer && intent\.getBooleanExtra\(DOUBLE, false\);' -or
     $mainSource -notmatch 'boolean forceCts = drawer \|\| source == TILE_SEARCH \|\| source == TILE_ASSISTANT;' -or
-    $mainSource -notmatch 'boolean direct = drawer \|\| !intent\.getBooleanExtra\(DIRECT_TRIED, false\);') {
+    $mainSource -notmatch 'boolean direct = !drawer && !intent\.getBooleanExtra\(DIRECT_TRIED, false\);') {
     throw 'Exported components: fixed list with bind permissions; drawer alias shown by default and blind to extras'
 }
 $securityChecks++

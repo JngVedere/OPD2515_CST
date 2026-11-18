@@ -298,7 +298,25 @@ public final class SetupActivity extends Activity {
         toggle("앱 서랍에 표시", getPackageManager().getComponentEnabledSetting(drawer) != PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
             (view, checked) -> getPackageManager().setComponentEnabledSetting(drawer, checked
                 ? PackageManager.COMPONENT_ENABLED_STATE_ENABLED : PackageManager.COMPONENT_ENABLED_STATE_DISABLED, PackageManager.DONT_KILL_APP));
-        text("앱 서랍의 아이콘을 누르면 연결 앱 설정과 상관없이 서클 투 서치가 열립니다. 이 설정 화면은 아이콘을 길게 눌러 '설정'으로 엽니다. 끄면 앱 서랍에서 아이콘이 사라집니다.", 14);
+        text("끄면 앱 서랍에서 아이콘이 사라집니다. 아이콘을 길게 눌러 '설정'을 고르면 언제든 이 설정 화면이 열립니다.", 14);
+        TextView iconLabel = text("아이콘을 누르면", 16);
+        iconLabel.setPadding(0, dp(10), 0, dp(2));
+        RadioGroup iconGroup = new RadioGroup(this);
+        String[] iconNames = {"서클 투 서치", "Gemini Assistant", "설정 화면"};
+        int[] iconIds = new int[iconNames.length];
+        for (int i = 0; i < iconNames.length; i++) {
+            RadioButton option = phrase(new RadioButton(this));
+            iconIds[i] = android.view.View.generateViewId();
+            option.setId(iconIds[i]); option.setText(iconNames[i]); option.setTextSize(18); option.setMinHeight(dp(48));
+            iconGroup.addView(option);
+        }
+        section.addView(iconGroup);
+        iconGroup.check(iconIds[DrawerActivity.action(this)]);
+        iconGroup.setOnCheckedChangeListener((group, selected) -> {
+            for (int i = 0; i < iconIds.length; i++)
+                if (iconIds[i] == selected) preferences.edit().putInt(DrawerActivity.ACTION, i).apply();
+        });
+        text("서클 투 서치는 연결 앱 설정과 상관없이 열립니다. Gemini Assistant는 전원 버튼 기능이 꺼져 있어도 열립니다.", 14);
         divider(section);
         button("빠른 설정에 Search 타일 추가", () -> addTile(LaunchTile.Search.class, "Search"));
         button("빠른 설정에 Assistant 타일 추가", () -> addTile(LaunchTile.Assistant.class, "Assistant"));

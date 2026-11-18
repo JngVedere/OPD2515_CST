@@ -9,8 +9,11 @@ final class TouchArea {
     /** WIDTH without the ColorOS taskbar; with the gesture bar and the taskbar both on, TASKBAR_WIDTH (portrait) or TASKBAR_WIDTH_LAND. */
     static final int X = 0, BOTTOM = 0, WIDTH = 200, TASKBAR_WIDTH = 240, TASKBAR_WIDTH_LAND = 330, HEIGHT = 38;
     static final int MIN_WIDTH = 60, MIN_HEIGHT = 20, MAX_HEIGHT = 160, MAX_BOTTOM = 400;
-    /** Below ~200 ms an ordinary tap or the start of a home swipe would count as a hold. */
-    static final int HOLD = 275, MIN_HOLD = 200, MAX_HOLD = 1000;
+    /**
+     * User decision: down to 50 ms. Below ~200 ms an ordinary tap or the start of a home swipe can count as a hold
+     * (the settings text warns about it); a finger that moves past the touch slop still never triggers.
+     */
+    static final int HOLD = 275, MIN_HOLD = 50, MAX_HOLD = 1000;
     /** Wait after the Google rebind before Gemini is requested (VoiceRepair). Bounded well under POWER_LAUNCH_AGE. */
     static final int SETTLE = 15, MAX_SETTLE = 1000;
     static final String HOLD_KEY = "hold_ms", SETTLE_KEY = "gemini_settle_ms";

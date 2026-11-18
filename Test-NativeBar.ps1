@@ -115,7 +115,8 @@ public final class LogTriggerHarness {
             check(TouchArea.typed(bad, true) == null, "Rejected input: " + (bad == null ? "null" : bad.codePoints().mapToObj(Integer::toHexString).toList()));
         check(TouchArea.typed("99999", false) == 99999 && TouchArea.typed("-9999", true) == -9999, "Longest allowed input parses without overflow");
         check(TouchArea.MAX_TYPED == 5 && String.valueOf(-1133).length() <= TouchArea.MAX_TYPED, "Every in-range value fits the length limit");
-        check(TouchArea.hold(50) == TouchArea.MIN_HOLD && TouchArea.hold(5000) == TouchArea.MAX_HOLD && TouchArea.hold(420) == 420, "Hold time is bounded");
+        check(TouchArea.MIN_HOLD == 50 && TouchArea.hold(10) == 50 && TouchArea.hold(-5) == 50 && TouchArea.hold(50) == 50
+            && TouchArea.hold(5000) == TouchArea.MAX_HOLD && TouchArea.hold(420) == 420, "Hold time is bounded (50-1000 ms)");
         check(TouchArea.settle(-1) == 0 && TouchArea.settle(99999) == TouchArea.MAX_SETTLE, "Gemini wait is bounded");
         check(TouchArea.taskbar("1", "3") && TouchArea.taskbar("1", null), "Gesture bar with the taskbar on: wide default");
         check(!TouchArea.taskbar("1", "0") && !TouchArea.taskbar("0", "3") && !TouchArea.taskbar(null, "3") && !TouchArea.taskbar("true", "3"), "3-button, taskbar off or unreadable: narrow default");

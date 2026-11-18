@@ -67,7 +67,7 @@ $manifestText = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'AndroidManife
 # aapt badging does not report activity-alias entries, so any reported launchable activity is an unexpected one.
 if ($launchable.Count -gt 0 -or
     ([regex]::Matches($manifestText, 'android\.intent\.category\.LAUNCHER" />')).Count -ne 2 -or
-    $manifestText -notmatch '(?s)<activity-alias android:name="\.DrawerLaunch" android:targetActivity="\.MainActivity"\s+android:enabled="true"') {
+    $manifestText -notmatch '(?s)<activity-alias android:name="\.DrawerLaunch" android:targetActivity="\.DrawerActivity"\s+android:enabled="true"') {
     throw 'The only launcher entry must be the app drawer alias, shown by default.'
 }
 # READ_LOGS is granted once over ADB; INTERNET/REQUEST_INSTALL_PACKAGES serve only the manual update check (AppUpdate).

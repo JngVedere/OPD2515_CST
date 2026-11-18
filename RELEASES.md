@@ -5,6 +5,7 @@ Circle-to-Search Trigger의 모든 공개 릴리즈 기록입니다. 최신 버�
 
 | 버전 | 채널 | 날짜 |
 | --- | --- | --- |
+| [v0.3.7](https://github.com/JngVedere/OPD2515_CST/releases/tag/v0.3.7) | 정식 | 2026-11-18 |
 | [v0.3.6](https://github.com/JngVedere/OPD2515_CST/releases/tag/v0.3.6) | 정식 | 2026-11-18 |
 | [v0.3.5](https://github.com/JngVedere/OPD2515_CST/releases/tag/v0.3.5) | 베타 | 2026-11-17 |
 | [v0.3.4](https://github.com/JngVedere/OPD2515_CST/releases/tag/v0.3.4) | 베타 | 2026-11-17 |
@@ -13,6 +14,23 @@ Circle-to-Search Trigger의 모든 공개 릴리즈 기록입니다. 최신 버�
 | [v0.3.2](https://github.com/JngVedere/OPD2515_CST/releases/tag/v0.3.2) | 정식 | 2026-11-16 |
 | [v0.3.0](https://github.com/JngVedere/OPD2515_CST/releases/tag/v0.3.0) | 정식 | 2026-11-15 |
 | [v0.2.6](https://github.com/JngVedere/OPD2515_CST/releases/tag/v0.2.6) | 정식 | 2026-11-15 |
+
+---
+
+## [v0.3.7](https://github.com/JngVedere/OPD2515_CST/releases/tag/v0.3.7) · 2026-11-18 · 정식
+
+#### 오류 수정
+- 앱 아이콘을 눌러 서클 투 서치를 열 때 빈 화면이 잠깐 보이던 문제를 수정했습니다. 홈 화면과 앱 서랍 모두에서 고쳐졌습니다.
+
+#### 편의성 개선
+- 앱 아이콘을 눌렀을 때 열 화면을 고를 수 있습니다 (설정 → 바로 실행 → 아이콘을 누르면).
+  - 서클 투 서치 (기본값) / Gemini Assistant / 설정 화면
+  - Gemini Assistant는 전원 버튼 기능이 꺼져 있어도 열립니다.
+- 길게 누르기 인식 시간을 최소 50ms까지 줄일 수 있습니다 (기존 200ms). 200ms 미만에서는 짧은 탭이나 홈 스와이프 시작도 길게 누르기로 인식될 수 있습니다.
+
+#### 업데이트 시 참고
+- 업데이트 후 기기 로그 승인을 다시 해야 할 수 있습니다.
+- 업데이트하면 ColorOS가 '백그라운드 활동 허용'을 초기화할 수 있습니다. 설정 화면 맨 위에 경고가 뜨면 눌러서 다시 허용해주세요.
 
 ---
 

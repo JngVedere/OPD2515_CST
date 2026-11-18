@@ -30,10 +30,12 @@ public final class MainActivity extends Activity {
     static final String SOURCE = "source";
     static final int TILE_SEARCH = 1, TILE_ASSISTANT = 2;
     /**
-     * Exported launcher alias (app drawer icon, off by default): always Circle to Search, and every extra is ignored,
-     * because any app can start it.
+     * Exported launcher alias (app drawer icon), now targeting the windowless DrawerActivity. Kept here for the settings
+     * switch that shows or hides it.
      */
     static final String DRAWER = "dev.padhelper.fastcts.DrawerLaunch";
+    /** Internal extra from DrawerActivity: its direct call was refused; Circle to Search fallback only. */
+    static final String DRAWER_FALLBACK = "drawer_fallback";
     private static final ComponentName MICTS = new ComponentName("com.parallelc.micts", "com.parallelc.micts.ui.activity.MainActivity");
 
     /** The default target and an explicitly picked MiCTS both take the CTS path (Google warmup, then MiCTS). */
@@ -50,7 +52,7 @@ public final class MainActivity extends Activity {
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
         Intent intent = getIntent();
-        boolean drawer = intent.getComponent() != null && DRAWER.equals(intent.getComponent().getClassName());
+        boolean drawer = intent.getBooleanExtra(DRAWER_FALLBACK, false); // MainActivity is not exported: internal only
         int source = drawer ? 0 : intent.getIntExtra(SOURCE, 0);
         // The drawer icon and the Search tile always mean Circle to Search, whatever the linked-app setting is (the
         // Assistant tile never reads it either).
@@ -91,7 +93,7 @@ public final class MainActivity extends Activity {
                 return;
             }
         }
-        boolean direct = drawer || !intent.getBooleanExtra(DIRECT_TRIED, false);
+        boolean direct = !drawer && !intent.getBooleanExtra(DIRECT_TRIED, false);
         if (source != TILE_SEARCH && source != TILE_ASSISTANT) { openCts(direct); return; }
         // Tiles: wait until the collapsing shade has handed the focus to this (transparent) window. Otherwise Circle to
         // Search captures the shade, and a Gemini window shown during the collapse is dismissed. The timeout is a backstop.

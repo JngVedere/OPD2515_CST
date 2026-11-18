@@ -33,7 +33,10 @@
             android:excludeFromRecents="true" android:taskAffinity="" />
         <!-- App drawer icon: shown by default; "앱 서랍에 표시" hides it (PackageManager component state). A tap opens
              Circle to Search only (MainActivity ignores every extra on this path); settings only via the long-press shortcut. -->
-        <activity-alias android:name=".DrawerLaunch" android:targetActivity=".MainActivity"
+        <activity android:name=".DrawerActivity" android:exported="false"
+            android:theme="@android:style/Theme.NoDisplay"
+            android:excludeFromRecents="true" android:noHistory="true" android:taskAffinity="" />
+        <activity-alias android:name=".DrawerLaunch" android:targetActivity=".DrawerActivity"
             android:enabled="true" android:exported="true" android:label="OpdCTS"
             android:excludeFromRecents="true">
             <intent-filter>
