@@ -12,7 +12,10 @@ import android.util.Log;
 import android.view.WindowManager;
 import android.widget.Toast;
 
-/** Warms Google's exported handoff activity, then opens the unchanged MiCTS app. */
+/**
+ * Opens the linked target. Circle to Search: the direct system call (CtsSession); only if that is refused and MiCTS is
+ * installed, the old path (Google's exported handoff activity, then the unchanged MiCTS app).
+ */
 public final class MainActivity extends Activity {
     static final String TARGET_COMPONENT = "target_component";
     static final String TARGET_LABEL = "target_label";
@@ -20,6 +23,17 @@ public final class MainActivity extends Activity {
     static final String ATTEMPT = "attempt";
     /** Internal extra from BarService: power double press, so its own target and record are used. */
     static final String DOUBLE = "double";
+    /** Internal extra from BarService: the direct call was already refused, go straight to the fallback. */
+    static final String DIRECT_TRIED = "direct_tried";
+    static final String CTS_ACCEPTED = "시스템이 서클 투 서치 요청을 수락함 · 화면 표시는 확인하지 않음";
+    /** Internal extra from this app's quick settings tiles (PendingIntent): which tile was tapped. */
+    static final String SOURCE = "source";
+    static final int TILE_SEARCH = 1, TILE_ASSISTANT = 2;
+    /**
+     * Exported launcher alias (app drawer icon, off by default): always Circle to Search, and every extra is ignored,
+     * because any app can start it.
+     */
+    static final String DRAWER = "dev.padhelper.fastcts.DrawerLaunch";
     private static final ComponentName MICTS = new ComponentName("com.parallelc.micts", "com.parallelc.micts.ui.activity.MainActivity");
 
     /** The default target and an explicitly picked MiCTS both take the CTS path (Google warmup, then MiCTS). */
@@ -35,7 +49,13 @@ public final class MainActivity extends Activity {
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
-        attempt = getIntent().getLongExtra(ATTEMPT, 0);
+        Intent intent = getIntent();
+        boolean drawer = intent.getComponent() != null && DRAWER.equals(intent.getComponent().getClassName());
+        int source = drawer ? 0 : intent.getIntExtra(SOURCE, 0);
+        // The drawer icon and the Search tile always mean Circle to Search, whatever the linked-app setting is (the
+        // Assistant tile never reads it either).
+        boolean forceCts = drawer || source == TILE_SEARCH || source == TILE_ASSISTANT;
+        attempt = drawer ? 0 : intent.getLongExtra(ATTEMPT, 0);
         // This trampoline must not recolor or cover the screen that Google captures.
         getWindow().clearFlags(WindowManager.LayoutParams.FLAG_TRANSLUCENT_STATUS
             | WindowManager.LayoutParams.FLAG_TRANSLUCENT_NAVIGATION | WindowManager.LayoutParams.FLAG_DIM_BEHIND);
@@ -46,9 +66,9 @@ public final class MainActivity extends Activity {
         getWindow().setNavigationBarColor(Color.TRANSPARENT);
         getWindow().setStatusBarContrastEnforced(false);
         getWindow().setNavigationBarContrastEnforced(false);
-        boolean twice = getIntent().getBooleanExtra(DOUBLE, false);
+        boolean twice = !drawer && intent.getBooleanExtra(DOUBLE, false);
         if (twice) record = BarService.LAST_DOUBLE;
-        String selected = getSharedPreferences("bar", MODE_PRIVATE).getString(twice ? BarService.POWER_DOUBLE_TARGET : TARGET_COMPONENT, "");
+        String selected = forceCts ? "" : getSharedPreferences("bar", MODE_PRIVATE).getString(twice ? BarService.POWER_DOUBLE_TARGET : TARGET_COMPONENT, "");
         if (!selected.isEmpty()) {
             ComponentName component = ComponentName.unflattenFromString(selected);
             if (component == null || getPackageName().equals(component.getPackageName())) {
@@ -71,20 +91,60 @@ public final class MainActivity extends Activity {
                 return;
             }
         }
+        boolean direct = drawer || !intent.getBooleanExtra(DIRECT_TRIED, false);
+        if (source != TILE_SEARCH && source != TILE_ASSISTANT) { openCts(direct); return; }
+        // Tiles: wait until the collapsing shade has handed the focus to this (transparent) window. Otherwise Circle to
+        // Search captures the shade, and a Gemini window shown during the collapse is dismissed. The timeout is a backstop.
+        getWindow().clearFlags(WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE);
+        afterShade = source == TILE_SEARCH ? () -> openCts(true) : () -> { afterShade = null; BarService.tileAssistant(this); finish(); };
+        handler.postDelayed(afterShade, SHADE_TIMEOUT);
+    }
+
+    /** Backstop for the Search tile when no window focus arrives (ms). */
+    private static final long SHADE_TIMEOUT = 1000;
+    private Runnable afterShade;
+
+    @Override public void onWindowFocusChanged(boolean focused) {
+        super.onWindowFocusChanged(focused);
+        Runnable pending = afterShade;
+        if (!focused || pending == null) return;
+        handler.removeCallbacks(pending);
+        pending.run();
+    }
+
+    private void openCts(boolean direct) {
+        afterShade = null;
+        if (direct && CtsSession.open(this)) {
+            record(StatusPolicy.ACCEPTED, CTS_ACCEPTED);
+            finish();
+            return;
+        }
+        // Fallback: the direct call was refused (Google not selected, screen locked, or the hidden call unavailable).
+        if (!micTsInstalled()) {
+            record(StatusPolicy.FAILED, "서클 투 서치를 열 수 없음 · Google 앱이 기본 디지털 어시스턴트인지 확인");
+            Toast.makeText(this, "서클 투 서치를 열지 못했습니다. 기본 디지털 어시스턴트가 Google인지 확인해주세요.", Toast.LENGTH_LONG).show();
+            finish();
+            return;
+        }
         try {
             startActivity(new Intent().setClassName(
                 "com.google.android.googlequicksearchbox",
                 "com.google.android.apps.gsa.assistant.handoff.AssistantHandoffActivity")
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_NO_ANIMATION));
             // Allow Google's activity to resume before MiCTS requests its voice session.
-            warmup = "Google 준비 요청 후 ";
+            warmup = "직접 호출 실패 · Google 준비 요청 후 ";
             micTsPending = true;
             handler.postDelayed(trigger, 0);
         } catch (ActivityNotFoundException | SecurityException error) {
             Log.w("FastMiCTS", "Google warmup unavailable; using MiCTS directly", error);
-            warmup = "Google 준비 실패 (" + error.getClass().getSimpleName() + ") 후 ";
+            warmup = "직접 호출 실패 · Google 준비 실패 (" + error.getClass().getSimpleName() + ") 후 ";
             openMiCTS();
         }
+    }
+
+    private boolean micTsInstalled() {
+        try { getPackageManager().getActivityInfo(MICTS, 0); return true; }
+        catch (android.content.pm.PackageManager.NameNotFoundException missing) { return false; }
     }
 
     private void record(int outcome, String detail) { BarService.attemptUpdate(this, record, attempt, outcome, detail); }
@@ -107,6 +167,7 @@ public final class MainActivity extends Activity {
 
     @Override public void onDestroy() {
         handler.removeCallbacks(trigger);
+        if (afterShade != null) handler.removeCallbacks(afterShade);
         if (micTsPending) record(StatusPolicy.CANCELLED, warmup + "MiCTS 요청 전에 실행 화면이 종료됨");
         super.onDestroy();
     }

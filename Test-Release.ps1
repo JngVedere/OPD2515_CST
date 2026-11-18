@@ -128,4 +128,13 @@ Check (@(Get-ChildItem -LiteralPath $dist -Force).Count -eq 2) 'Final release st
     if (Test-Path -LiteralPath $fixture) { Remove-TestFixture $fixture }
 }
 Check (-not (Test-Path -LiteralPath $fixture)) 'The complete fixture is removed after the test run'
+# 0.3.6: the repository is GPL-3.0-only (unmodified FSF text); NOTICE keeps the bundled Apache-2.0 notice and references.
+$licenseFile = Join-Path $PSScriptRoot 'LICENSE'
+$licenseLf = [Text.Encoding]::UTF8.GetBytes([IO.File]::ReadAllText($licenseFile).Replace("`r`n", "`n")) # checkout may use CRLF
+$licenseHash = -join ([Security.Cryptography.SHA256]::Create().ComputeHash($licenseLf) | ForEach-Object { $_.ToString('x2') })
+Check ($licenseHash -eq '3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986') 'LICENSE is the unmodified GPL-3.0 text'
+$noticeText = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'NOTICE'))
+Check ($noticeText -match 'GPL-3\.0-only' -and $noticeText -match 'AndroidHiddenApiBypass 6\.1 \(LSPosed\), Apache License 2\.0' -and
+    $noticeText -match 'ColorGoogle' -and $noticeText -match 'MiCTS' -and $noticeText -match 'MindTrigger Assist' -and
+    (Test-Path -LiteralPath (Join-Path $PSScriptRoot 'micts/fast-launch/res/raw/notice_hidden_api_bypass.txt'))) 'NOTICE names the license, the references and the bundled Apache-2.0 notice'
 Write-Output ('PASS: '+$checks+' app release checks; no SDK, device, or network used.')

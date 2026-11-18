@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Approved design (canvas 2nd draft C) is drawn on the full 108 grid; scaled 2/3 so it fits the 72dp visible area of an adaptive icon. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <group android:scaleX="0.6667" android:scaleY="0.6667" android:pivotX="54" android:pivotY="54">
+        <path android:pathData="M64.61,16.52 L91.48,43.39 A15,15 0 0,1 91.48,64.61 L64.61,91.48 A15,15 0 0,1 43.39,91.48 L16.52,64.61 A15,15 0 0,1 16.52,43.39 L43.39,16.52 A15,15 0 0,1 64.61,16.52 Z">
+            <aapt:attr name="android:fillColor">
+                <gradient android:type="linear"
+                    android:startX="54" android:startY="5.92" android:endX="54" android:endY="102.08">
+                    <item android:offset="0" android:color="#FF22D3EE" />
+                    <item android:offset="0.5" android:color="#FF6366F1" />
+                    <item android:offset="1" android:color="#FFEC4899" />
+                </gradient>
+            </aapt:attr>
+        </path>
+        <path android:fillColor="#FFFFFFFF" android:pathData="M54,35 Q56.8,49.8 66.8,54 Q56.8,58.2 54,73 Q51.2,58.2 41.2,54 Q51.2,49.8 54,35 Z" />
+    </group>
+</vector>

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Long-press menu of the app drawer icon: the only way from the icon to the settings screen. -->
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut android:shortcutId="settings" android:enabled="true"
+        android:icon="@mipmap/ic_launcher"
+        android:shortcutShortLabel="@string/shortcut_settings">
+        <intent android:action="android.intent.action.VIEW"
+            android:targetPackage="dev.padhelper.fastcts"
+            android:targetClass="dev.padhelper.fastcts.SetupActivity" />
+    </shortcut>
+</shortcuts>

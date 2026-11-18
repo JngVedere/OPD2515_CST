@@ -38,21 +38,12 @@ final class GeminiSession {
         KeyguardManager keyguard = context.getSystemService(KeyguardManager.class);
         if (power == null || keyguard == null
                 || !LogTrigger.powerScreen(power.isInteractive(), keyguard.isKeyguardLocked(), lockedAllowed)) return false;
-        String selected = Settings.Secure.getString(context.getContentResolver(), "voice_interaction_service");
-        ComponentName component = selected == null ? null : ComponentName.unflattenFromString(selected);
-        if (component == null || !GOOGLE.equals(component.getPackageName())) {
+        if (!googleSelected(context)) {
             Log.w(TAG, "Google is not the active voice interaction service");
             return false;
         }
         // Only an exported, permission-checked Google provider is eligible for this short warmup.
         try (ContentProviderClient ignored = warmGoogle(context)) {
-            Class<?> serviceManager = Class.forName("android.os.ServiceManager");
-            Object binder = HiddenApiBypass.invoke(serviceManager, null, "getService", "voiceinteraction");
-            if (!(binder instanceof IBinder) || !((IBinder) binder).isBinderAlive()) return false;
-            Class<?> stub = Class.forName("com.android.internal.app.IVoiceInteractionManagerService$Stub");
-            Object manager = HiddenApiBypass.invoke(stub, null, "asInterface", binder);
-            if (manager == null) return false;
-            Class<?> managerType = Class.forName("com.android.internal.app.IVoiceInteractionManagerService");
             Bundle args = new Bundle();
             args.putLong("invocation_time_ms", SystemClock.elapsedRealtime());
             // Screen state read last, right before the request, so the flags match the state that was checked.
@@ -60,10 +51,7 @@ final class GeminiSession {
             if (!LogTrigger.powerScreen(power.isInteractive(), locked, lockedAllowed)) return false;
             int flags = locked ? LOCKED_FLAGS : FLAGS;
             // No CTS-specific arguments: Google handles the ordinary selected assistant session.
-            Object result = Build.VERSION.SDK_INT >= 34
-                ? HiddenApiBypass.invoke(managerType, manager, "showSessionFromSession", null, args, flags, null)
-                : HiddenApiBypass.invoke(managerType, manager, "showSessionFromSession", null, args, flags);
-            boolean accepted = Boolean.TRUE.equals(result);
+            boolean accepted = showSession(args, flags);
             Log.i(TAG, "Assistant request accepted=" + accepted + " locked=" + locked + " flags=" + flags);
             return accepted;
         } catch (ReflectiveOperationException | RuntimeException | LinkageError error) {
@@ -71,6 +59,28 @@ final class GeminiSession {
             Log.w(TAG, "Assistant request unavailable: " + error.getClass().getSimpleName());
             return false;
         }
+    }
+
+    /** The session goes to the active voice interaction service: only Google's may receive these requests. */
+    static boolean googleSelected(Context context) {
+        String selected = Settings.Secure.getString(context.getContentResolver(), "voice_interaction_service");
+        ComponentName component = selected == null ? null : ComponentName.unflattenFromString(selected);
+        return component != null && GOOGLE.equals(component.getPackageName());
+    }
+
+    /** IVoiceInteractionManagerService.showSessionFromSession (hidden API); true = the system accepted the request. */
+    static boolean showSession(Bundle args, int flags) throws ReflectiveOperationException {
+        Class<?> serviceManager = Class.forName("android.os.ServiceManager");
+        Object binder = HiddenApiBypass.invoke(serviceManager, null, "getService", "voiceinteraction");
+        if (!(binder instanceof IBinder) || !((IBinder) binder).isBinderAlive()) return false;
+        Class<?> stub = Class.forName("com.android.internal.app.IVoiceInteractionManagerService$Stub");
+        Object manager = HiddenApiBypass.invoke(stub, null, "asInterface", binder);
+        if (manager == null) return false;
+        Class<?> managerType = Class.forName("com.android.internal.app.IVoiceInteractionManagerService");
+        Object result = Build.VERSION.SDK_INT >= 34
+            ? HiddenApiBypass.invoke(managerType, manager, "showSessionFromSession", null, args, flags, null)
+            : HiddenApiBypass.invoke(managerType, manager, "showSessionFromSession", null, args, flags);
+        return Boolean.TRUE.equals(result);
     }
 
     private static ContentProviderClient warmGoogle(Context context) {

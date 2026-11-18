@@ -5,6 +5,9 @@
 /*
 !/.gitignore
 !/README.md
+!/RELEASES.md
+!/LICENSE
+!/NOTICE
 !/HOW TO USE.MD
 !/App-Release.json
 !/App-Release-Beta.json

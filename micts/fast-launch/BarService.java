@@ -365,22 +365,62 @@ public final class BarService extends AccessibilityService {
         boolean started = VoiceRepair.ready(rebind) && GeminiSession.launch(this, lockedAllowed);
         // true = the system accepted the session request; it does not prove an assistant window appeared.
         Log.i("PadPower", "GeminiSession.launch returned " + started + " (request acceptance, window unverified)");
+        // Press-to-request time in the record: if a press feels slow, the record shows whether the delay was on this side.
         if (started) attemptUpdate(this, LAST_POWER, powerAttempt, StatusPolicy.ACCEPTED,
-            rebound + " · 시스템이 Gemini 세션 요청을 수락함 · Gemini Assistant 창 표시는 확인하지 않음");
+            rebound + " · 시스템이 Gemini 세션 요청을 수락함 (누름 후 " + (SystemClock.elapsedRealtime() - since)
+                + "ms) · Gemini Assistant 창 표시는 확인하지 않음");
         else attemptUpdate(this, LAST_POWER, powerAttempt, StatusPolicy.FAILED, rebound + " · " + (!VoiceRepair.ready(rebind)
             ? "Gemini 요청 안 함" : googleVoice(this) == StatusPolicy.GOOGLE_READY ? "시스템이 Gemini 세션 요청을 수락하지 않음"
             : "Google 음성 서비스 미선택 또는 사용 불가"));
         if (!started) android.widget.Toast.makeText(this, "Gemini Assistant를 열지 못했습니다.", android.widget.Toast.LENGTH_SHORT).show();
     }
 
-    private void launchSearch() {
-        long attempt = attemptBegin(this, LAST_BAR, StatusPolicy.PENDING, barInput(), "입력 인식 · 실행 화면 시작 요청");
+    /**
+     * Assistant quick settings tile (0.3.6): an explicit tap, so neither the power option nor a log session is needed.
+     * Same order as a power press: rebind the selected Google service on a worker, then GeminiSession's shared screen
+     * gate with the locked-screen option (snapshot at the tap, rechecked).
+     */
+    static void tileAssistant(Context context) {
+        Context app = context.getApplicationContext();
+        boolean lockedSnapshot = lockedAssist(app);
+        Handler main = new Handler(Looper.getMainLooper());
         try {
-            startActivity(new Intent(this, MainActivity.class).putExtra(MainActivity.ATTEMPT, attempt)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_NO_ANIMATION));
+            new Thread(() -> {
+                int rebind;
+                try { rebind = VoiceRepair.prepare(app); }
+                catch (RuntimeException unexpected) { rebind = VoiceRepair.ERROR; }
+                int result = rebind;
+                main.post(() -> {
+                    boolean started = VoiceRepair.ready(result) && GeminiSession.launch(app, lockedSnapshot && lockedAssist(app));
+                    Log.i("PadTile", "assistant tile rebind=" + result + " started=" + started);
+                    if (!started) android.widget.Toast.makeText(app, "Gemini Assistant를 열지 못했습니다.", android.widget.Toast.LENGTH_SHORT).show();
+                });
+            }, "PadTileAssistant").start();
+        } catch (RuntimeException | OutOfMemoryError unavailable) {
+            Log.w("PadTile", "assistant tile thread unavailable: " + unavailable.getClass().getSimpleName());
+        }
+    }
+
+    private void launchSearch() {
+        launchTarget(LAST_BAR, attemptBegin(this, LAST_BAR, StatusPolicy.PENDING, barInput(), "입력 인식 · 실행 화면 시작 요청"), false);
+    }
+
+    /**
+     * Circle to Search target: the direct system call from this running service (no activity hop). Any other target, or a
+     * refused direct call (MiCTS fallback), goes through MainActivity.
+     */
+    private void launchTarget(String record, long attempt, boolean twice) {
+        boolean cts = MainActivity.cts(prefs(this).getString(twice ? POWER_DOUBLE_TARGET : MainActivity.TARGET_COMPONENT, ""));
+        if (cts && CtsSession.open(this)) {
+            attemptUpdate(this, record, attempt, StatusPolicy.ACCEPTED, MainActivity.CTS_ACCEPTED);
+            return;
+        }
+        try {
+            startActivity(new Intent(this, MainActivity.class).putExtra(MainActivity.ATTEMPT, attempt).putExtra(MainActivity.DOUBLE, twice)
+                .putExtra(MainActivity.DIRECT_TRIED, cts).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_NO_ANIMATION));
         } catch (RuntimeException error) {
             Log.e("PadBar", "Search launch failed", error);
-            attemptUpdate(this, LAST_BAR, attempt, StatusPolicy.FAILED, "실행 화면을 시작하지 못함 (" + error.getClass().getSimpleName() + ")");
+            attemptUpdate(this, record, attempt, StatusPolicy.FAILED, "실행 화면을 시작하지 못함 (" + error.getClass().getSimpleName() + ")");
         }
     }
 
@@ -430,14 +470,7 @@ public final class BarService extends AccessibilityService {
                 !doubleWanted(this) ? "두 번 누르기 꺼짐" : !granted(this) ? "접근성 승인 해제됨" : "화면 꺼짐 또는 잠금 상태");
             return;
         }
-        long attempt = attemptBegin(this, LAST_DOUBLE, StatusPolicy.PENDING, DOUBLE_INPUT, "입력 인식 · 실행 화면 시작 요청");
-        try {
-            startActivity(new Intent(this, MainActivity.class).putExtra(MainActivity.ATTEMPT, attempt).putExtra(MainActivity.DOUBLE, true)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_NO_ANIMATION));
-        } catch (RuntimeException error) {
-            Log.e("PadPowerKeys", "Double press launch failed", error);
-            attemptUpdate(this, LAST_DOUBLE, attempt, StatusPolicy.FAILED, "실행 화면을 시작하지 못함 (" + error.getClass().getSimpleName() + ")");
-        }
+        launchTarget(LAST_DOUBLE, attemptBegin(this, LAST_DOUBLE, StatusPolicy.PENDING, DOUBLE_INPUT, "입력 인식 · 실행 화면 시작 요청"), true);
     }
 
     /** Google's :interactor was killed: restart it now (or at the next screen on) so the next power press is not cold. */

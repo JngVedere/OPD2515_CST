@@ -61,7 +61,14 @@ if ($LASTEXITCODE -ne 0) { throw 'APK metadata inspection failed' }
 if (-not ($metadata -match ("^package: name='dev\.padhelper\.fastcts' versionCode='" + [regex]::Escape([string]$version.VersionCode) + "' versionName='" + [regex]::Escape([string]$version.Version) + "'"))) {
     throw 'Signed APK package/version does not match App-Version.json'
 }
-if ($metadata -match '^launchable-activity:') { throw 'The app must have no launcher icon.' }
+# 0.3.6: the only launcher entry is the app drawer alias, and it ships disabled (the user turns it on in settings).
+$launchable = @($metadata | Where-Object { $_ -match '^launchable-activity:' })
+$manifestText = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'AndroidManifest.xml') -Raw -Encoding UTF8
+if ($launchable.Count -gt 1 -or ($launchable.Count -eq 1 -and $launchable[0] -notmatch "name='dev\.padhelper\.fastcts\.DrawerLaunch'") -or
+    ([regex]::Matches($manifestText, 'android\.intent\.category\.LAUNCHER" />')).Count -ne 2 -or
+    $manifestText -notmatch '(?s)<activity-alias android:name="\.DrawerLaunch" android:targetActivity="\.MainActivity"\s+android:enabled="false"') {
+    throw 'The only launcher entry must be the app drawer alias, disabled by default.'
+}
 # READ_LOGS is granted once over ADB; INTERNET/REQUEST_INSTALL_PACKAGES serve only the manual update check (AppUpdate).
 # No foreground-service or overlay permission is allowed.
 $allowed = @('android.permission.RECEIVE_BOOT_COMPLETED','android.permission.WRITE_SECURE_SETTINGS','android.permission.READ_LOGS',

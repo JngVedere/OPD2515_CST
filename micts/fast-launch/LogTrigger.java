@@ -274,6 +274,9 @@ final class LogTrigger {
         return interactive && (!locked || lockedAllowed);
     }
 
+    /** Circle to Search (CtsSession): interactive and unlocked only, with no locked-screen option. */
+    static boolean ctsScreen(boolean interactive, boolean locked) { return interactive && !locked; }
+
     /** Power gate at the press (age 0) and again before the delayed Gemini request (elapsed-realtime age since the press). */
     static boolean powerLaunch(boolean power, boolean granted, boolean interactive, boolean locked, boolean lockedAllowed,
             boolean active, long age) {

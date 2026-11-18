@@ -12,12 +12,15 @@
         <package android:name="com.android.launcher" />
         <package android:name="com.heytap.speechassist" />
         <package android:name="com.google.android.googlequicksearchbox" />
+        <!-- Circle to Search fallback only: the direct call is refused and MiCTS is installed. -->
+        <package android:name="com.parallelc.micts" />
         <intent>
             <action android:name="android.intent.action.MAIN" />
             <category android:name="android.intent.category.LAUNCHER" />
         </intent>
     </queries>
     <application android:label="Circle-to-Search Trigger"
+        android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher_round"
         android:allowBackup="false" android:theme="@style/TransparentTrigger">
         <receiver android:name=".BootReceiver" android:exported="false" android:directBootAware="true">
             <intent-filter>
@@ -28,6 +31,17 @@
         <receiver android:name=".AppUpdate$Result" android:exported="false" />
         <activity android:name=".MainActivity" android:exported="false"
             android:excludeFromRecents="true" android:taskAffinity="" />
+        <!-- App drawer icon: off until the user turns on "앱 서랍에 표시" (PackageManager component state). A tap opens
+             Circle to Search only (MainActivity ignores every extra on this path); settings only via the long-press shortcut. -->
+        <activity-alias android:name=".DrawerLaunch" android:targetActivity=".MainActivity"
+            android:enabled="false" android:exported="true" android:label="OpdCTS"
+            android:excludeFromRecents="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <meta-data android:name="android.app.shortcuts" android:resource="@xml/shortcuts" />
+        </activity-alias>
         <activity android:name=".LogAccessActivity" android:exported="false"
             android:excludeFromRecents="true" android:taskAffinity="" android:launchMode="singleTask" />
         <activity android:name=".SetupCommandActivity" android:exported="true"
@@ -52,6 +66,20 @@
         </service>
         <service android:name=".BarTile" android:exported="true"
             android:label="Circle-to-Search Trigger" android:icon="@android:drawable/ic_menu_search"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
+        <service android:name=".LaunchTile$Search" android:exported="true"
+            android:label="Search" android:icon="@drawable/ic_tile_search"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
+        <service android:name=".LaunchTile$Assistant" android:exported="true"
+            android:label="Assistant" android:icon="@drawable/ic_tile_assistant"
             android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
             <intent-filter>
                 <action android:name="android.service.quicksettings.action.QS_TILE" />

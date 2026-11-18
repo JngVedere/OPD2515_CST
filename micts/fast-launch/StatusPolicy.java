@@ -71,7 +71,7 @@ final class StatusPolicy {
             return where + " 감지 중 · 제스처 안내 막대 표시 여부 확인 불가 (설정 → 시스템 및 업데이트 → 시스템 탐색에서 숨기기가 꺼져 있는지 확인)";
         return "사용 중 · " + where + " 감지 중" + (cts ? " · Google 설정됨, 실제 연결 상태는 확인 불가" : "")
             + (nativeMode && gestureBar == GESTURE_TASKBAR ? " · 작업 표시줄 기준" : "")
-            + (!nativeMode && buttons ? " · 3버튼 탐색에서는 홈 화면의 최근 앱 버튼을 영역이 가릴 수 있음" : "");
+            + (!nativeMode && buttons ? " · 3버튼 탐색에서 홈 화면의 최근 앱 버튼을 가리면 터치 영역에서 위치를 옮기세요" : "");
     }
 
     /** Power long press -> small Gemini readiness. Breeno is not a prerequisite here; WSS only enables the per-press rebind. */

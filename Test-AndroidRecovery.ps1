@@ -750,19 +750,22 @@ $service = $allSources['BarService.java']
 $method = '(?:(?!\r?\n    (?:private|static|@Override)).)*' # stays inside one method body
 $repairUsers = @($allSources.Keys | Where-Object { $_ -ne 'VoiceRepair.java' -and $allSources[$_] -match 'VoiceRepair\.(run|begin|prepare)\(' } | Sort-Object)
 if (($repairUsers -join ',') -cne 'BarService.java,SetupActivity.java' -or
-    ([regex]::Matches($service, 'VoiceRepair\.(run|begin|prepare)\(')).Count -ne 2 -or
+    ([regex]::Matches($service, 'VoiceRepair\.(run|begin|prepare)\(')).Count -ne 3 -or
     $service -notmatch ('(?s)private void powerGesture\(\) \{' + $method + 'VoiceRepair\.prepare\(app\)') -or
+    $service -notmatch ('(?s)static void tileAssistant\(Context context\) \{' + $method + 'rebind = VoiceRepair\.prepare\(app\);' + $method +
+        'boolean started = VoiceRepair\.ready\(result\) && GeminiSession\.launch\(app, lockedSnapshot && lockedAssist\(app\)\);') -or
     $service -notmatch ('(?s)private final Runnable warm = \(\) -> \{' + $method + '!power\(this\)' + $method + 'VoiceRepair\.run\(app\)') -or
     $service -notmatch 'else if \(kind == LogTrigger\.GOOGLE_DIED\) googleDied\(\);' -or
     ([regex]::Matches($allSources['SetupActivity.java'], 'VoiceRepair\.(run|begin|prepare)\(')).Count -ne 1 -or
     $allSources['SetupActivity.java'] -notmatch ('(?s)private void repairVoice\(\) \{' + $method + 'VoiceRepair\.run\(app\)')) {
-    throw 'Google voice rebind runs only per accepted power press, the power-option warm-up after a Google :interactor kill, and the explicit repair button (never BAR/touch CTS)'
+    throw 'Google voice rebind runs only per accepted power press, the power-option warm-up after a Google :interactor kill, the Assistant tile tap and the explicit repair button (never BAR/touch CTS)'
 }
 $securityChecks++
 if ($service -notmatch 'VoiceRepair\.recover\(this\)') { throw 'Service start must finish an interrupted voice rebind' }
 $securityChecks++
 # Order: worker rebinds, then posts; the main thread rechecks the request and only then asks for Gemini.
-if ([regex]::Matches($service, 'GeminiSession\.launch\(').Count -ne 1 -or
+if ([regex]::Matches($service, 'GeminiSession\.launch\(').Count -ne 2 -or
+    @($allSources.Keys | Where-Object { $_ -ne 'BarService.java' -and $allSources[$_] -match 'GeminiSession\.launch\(' }).Count -ne 0 -or
     $service -notmatch '(?s)rebind = VoiceRepair\.prepare\(app\);.{0,200}handler\.post\(\(\) -> finishPower\(request, since, result, lockedAllowed\)\)' -or
     $service -notmatch ('(?s)private void finishPower\(long request, long since, int rebind, boolean lockedSnapshot\) \{\s*powerPending = false;' + $method +
         'boolean lockedAllowed = lockedSnapshot && lockedAssist\(this\);\s*if \(instance != this \|\| request != powerRequest \|\| !powerAllowed\(lockedAllowed, age\)\)' + $method +
@@ -799,6 +802,20 @@ if ($service -notmatch '(?s)private boolean powerAllowed\(boolean lockedAllowed,
     ([regex]::Matches($gemini, 'LogTrigger\.powerScreen\(')).Count -ne 2 -or
     $allowedSources -match 'requestDismissKeyguard|disableKeyguard|newKeyguardLock|FLAG_DISMISS_KEYGUARD|FLAG_SHOW_WHEN_LOCKED|setShowWhenLocked|setTurnScreenOn|FLAG_TURN_SCREEN_ON|ACQUIRE_CAUSES_WAKEUP|newWakeLock|wakeUp\(|launchVoiceAssistFromKeyguard|LOCK_SCREEN|lockscreen') {
     throw 'Locked-screen assistant: one shared gate, gesture-only flags while locked, no keyguard dismissal, wake or lock-setting changes'
+}
+$securityChecks++
+# Circle to Search direct call (0.3.6): the hidden session call lives only in GeminiSession.showSession; its only other
+# caller is CtsSession, which refuses a locked or non-interactive screen and a non-Google assistant before calling.
+$cts = $allSources['CtsSession.java']
+if (([regex]::Matches($joinedSources, '"showSessionFromSession"')).Count -ne 2 -or
+    @($allSources.Keys | Where-Object { $_ -ne 'GeminiSession.java' -and $allSources[$_] -match 'GeminiSession\.showSession\(' }) -join ',' -cne 'CtsSession.java' -or
+    $cts -notmatch '(?s)if \(power == null \|\| keyguard == null \|\| !LogTrigger\.ctsScreen\(power\.isInteractive\(\), keyguard\.isKeyguardLocked\(\)\)\s*\|\| !GeminiSession\.googleSelected\(context\)\) return false;.{0,400}GeminiSession\.showSession\(args, FLAGS\)' -or
+    $cts -match 'lockedAssist|LOCKED_FLAGS|micts_trigger' -or
+    # Call arguments proven on the device (0.3.6): the entry key alone selects Circle to Search; full assist flags.
+    $cts -notmatch 'static final String ENTRY_KEY = "omni\.entry_point"' -or $cts -notmatch 'static final int ENTRY = 1;' -or
+    $cts -notmatch 'private static final int FLAGS = 7;' -or $cts -notmatch 'args\.putInt\(ENTRY_KEY, ENTRY\);' -or
+    $cts -notmatch 'args\.putLong\("invocation_time_ms", SystemClock\.elapsedRealtime\(\)\);') {
+    throw 'Circle to Search direct call: one hidden call site, unlocked screen and Google assistant only'
 }
 $securityChecks++
 # The bottom trigger (CTS / chosen app) stays unlocked-only regardless of the locked-screen option.
@@ -856,6 +873,26 @@ $securityChecks++
 $launcher = $manifest.SelectSingleNode('/manifest/application/activity[@android:name=".MainActivity"]',$namespaces)
 if (-not $launcher -or $launcher.GetAttribute('exported',$namespaces.LookupNamespace('android')) -ne 'false') {
     throw 'Internal touch-trigger activity must not be exported'
+}
+$securityChecks++
+# 0.3.6: every exported component is listed here. Services need their system bind permission; the drawer alias ships
+# disabled and MainActivity ignores every extra when started through it (any app can start a launcher entry).
+$androidNs = $namespaces.LookupNamespace('android')
+$exported = @($manifest.SelectNodes('/manifest/application/*',$namespaces) | Where-Object { $_.GetAttribute('exported',$androidNs) -eq 'true' } |
+    ForEach-Object { $_.GetAttribute('name',$androidNs) + '|' + $_.GetAttribute('permission',$androidNs) } | Sort-Object)
+$expectedExported = @('.BarService|android.permission.BIND_ACCESSIBILITY_SERVICE', '.BarTile|android.permission.BIND_QUICK_SETTINGS_TILE',
+    '.DrawerLaunch|', '.LaunchTile$Assistant|android.permission.BIND_QUICK_SETTINGS_TILE', '.LaunchTile$Search|android.permission.BIND_QUICK_SETTINGS_TILE',
+    '.SetupActivity|', '.SetupCommandActivity|android.permission.DUMP') | Sort-Object
+$drawerAlias = $manifest.SelectSingleNode('/manifest/application/activity-alias[@android:name=".DrawerLaunch"]',$namespaces)
+$mainSource = $allSources['MainActivity.java']
+if (($exported -join ',') -cne ($expectedExported -join ',') -or -not $drawerAlias -or $drawerAlias.GetAttribute('enabled',$androidNs) -ne 'false' -or
+    $drawerAlias.GetAttribute('targetActivity',$androidNs) -ne '.MainActivity' -or
+    $mainSource -notmatch 'int source = drawer \? 0 : intent\.getIntExtra\(SOURCE, 0\);' -or
+    $mainSource -notmatch 'attempt = drawer \? 0 : intent\.getLongExtra\(ATTEMPT, 0\);' -or
+    $mainSource -notmatch 'boolean twice = !drawer && intent\.getBooleanExtra\(DOUBLE, false\);' -or
+    $mainSource -notmatch 'boolean forceCts = drawer \|\| source == TILE_SEARCH \|\| source == TILE_ASSISTANT;' -or
+    $mainSource -notmatch 'boolean direct = drawer \|\| !intent\.getBooleanExtra\(DIRECT_TRIED, false\);') {
+    throw 'Exported components: fixed list with bind permissions; drawer alias disabled by default and blind to extras'
 }
 $securityChecks++
 $barService = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'micts/fast-launch/BarService.java'))

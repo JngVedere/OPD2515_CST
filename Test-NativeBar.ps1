@@ -368,6 +368,8 @@ public final class LogTriggerHarness {
             boolean expected = p && g && a && on && (!lk || opt);
             check(LogTrigger.powerLaunch(p, g, on, lk, opt, a, 900) == expected, "Power launch gate case " + bits);
             check(LogTrigger.powerScreen(on, lk, opt) == (on && (!lk || opt)), "Power screen rule case " + bits);
+            // Circle to Search never runs over the keyguard or a dark screen, whatever the locked-screen option says.
+            check(LogTrigger.ctsScreen(on, lk) == (on && !lk) && (!LogTrigger.ctsScreen(on, lk) || LogTrigger.powerScreen(on, lk, false)), "Circle to Search screen rule case " + bits);
         }
         check(LogTrigger.powerLaunch(true, true, true, false, false, true, 900), "Option OFF: unlocked interactive screen still allowed (old behaviour)");
         check(!LogTrigger.powerLaunch(true, true, true, true, false, true, 900), "Option OFF: locked screen stays blocked");

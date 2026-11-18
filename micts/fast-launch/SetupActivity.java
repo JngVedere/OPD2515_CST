@@ -2,6 +2,7 @@ package dev.padhelper.fastcts;
 
 import android.app.*;
 import android.content.*;
+import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
 import android.database.ContentObserver;
 import android.graphics.drawable.Icon;
@@ -40,6 +41,32 @@ public final class SetupActivity extends Activity {
     private boolean syncing;
     /** Touch-area sliders for the current orientation ({x, bottom, width, height}), the hold slider and the Gemini wait slider. */
     private final Slider[] areaSliders = new Slider[4];
+    /** Detail (default) shows every card description; Compact hides them. Per-viewer display preference only. */
+    private static final String COMPACT = "compact_ui";
+    private final java.util.List<android.view.View> details = new java.util.ArrayList<>();
+    private LinearLayout experimentalBox;
+    private android.widget.FrameLayout detailToggle;
+    private TextView detailKnob;
+    private int accent;
+
+    private void showDetails() {
+        boolean compact = preferences.getBoolean(COMPACT, false);
+        for (android.view.View view : details) view.setVisibility(compact ? android.view.View.GONE : android.view.View.VISIBLE);
+        android.graphics.drawable.GradientDrawable knob = new android.graphics.drawable.GradientDrawable();
+        // Detail: theme accent (the switches' color) on the right; Compact: the screen's secondary gray on the left.
+        int fill = compact ? secondary : accent;
+        knob.setColor(fill);
+        knob.setCornerRadius(dp(13));
+        // Dark theme turns the accent and gray light: pick the label color from the fill so it stays readable.
+        detailKnob.setTextColor(android.graphics.Color.luminance(fill) > 0.45f ? 0xFF1F1F24 : 0xFFFFFFFF);
+        detailKnob.setBackground(knob);
+        detailKnob.setText(compact ? "Compact" : "Detail");
+        ((android.widget.FrameLayout.LayoutParams) detailKnob.getLayoutParams()).gravity =
+            (compact ? android.view.Gravity.START : android.view.Gravity.END) | android.view.Gravity.CENTER_VERTICAL;
+        detailKnob.requestLayout();
+        detailToggle.setContentDescription(compact ? "간단히 보기 켜짐, 눌러서 설명 모두 보기" : "설명 모두 보기 켜짐, 눌러서 간단히 보기");
+    }
+
     /** Orientation badge of the touch area section: blue while the area is used, grey in native mode. */
     private TextView facing;
     private final android.graphics.drawable.GradientDrawable facingBox = new android.graphics.drawable.GradientDrawable();
@@ -74,12 +101,39 @@ public final class SetupActivity extends Activity {
         });
         scroll.addView(body);
         setContentView(scroll);
-        text("Circle-to-Search Trigger", 24).setTypeface(null, android.graphics.Typeface.BOLD);
-        text("하단 중앙을 길게 눌러 선택한 앱을 엽니다.", 18);
-        android.content.res.TypedArray colors = obtainStyledAttributes(new int[]{android.R.attr.textColorSecondary, android.R.attr.textColorPrimaryDisableOnly});
+        android.content.res.TypedArray colors = obtainStyledAttributes(new int[]{android.R.attr.textColorSecondary, android.R.attr.textColorPrimaryDisableOnly, android.R.attr.colorAccent});
         secondary = colors.getColor(0, 0xFF808080);
         primary = colors.getColorStateList(1);
+        accent = colors.getColor(2, 0xFF4A5A8E);
         colors.recycle();
+        // Title row: app name on the left, the Detail / Compact switch for the card descriptions at the right end.
+        TextView title = text("Circle-to-Search Trigger", 24);
+        title.setTypeface(null, android.graphics.Typeface.BOLD);
+        body.removeView(title);
+        LinearLayout header = new LinearLayout(this);
+        header.setGravity(android.view.Gravity.CENTER_VERTICAL);
+        header.addView(title, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        // ON/OFF-style switch: gray outlined capsule, a colored pill with the label on one side (Detail right, Compact left).
+        detailToggle = new android.widget.FrameLayout(this);
+        android.graphics.drawable.GradientDrawable capsule = new android.graphics.drawable.GradientDrawable();
+        capsule.setColor(0x00000000);
+        capsule.setStroke(dp(1), secondary); // same thin gray as the rest of the screen
+        capsule.setCornerRadius(dp(16));
+        detailToggle.setBackground(capsule);
+        detailToggle.setPadding(dp(3), dp(3), dp(3), dp(3));
+        detailKnob = new TextView(this);
+        detailKnob.setTextSize(12);
+        detailKnob.setTypeface(null, android.graphics.Typeface.BOLD);
+        detailKnob.setTextColor(0xFFFFFFFF);
+        detailKnob.setGravity(android.view.Gravity.CENTER);
+        detailToggle.addView(detailKnob, new android.widget.FrameLayout.LayoutParams(dp(66), dp(26)));
+        detailToggle.setOnClickListener(v -> {
+            preferences.edit().putBoolean(COMPACT, !preferences.getBoolean(COMPACT, false)).apply();
+            showDetails();
+        });
+        header.addView(detailToggle, new LinearLayout.LayoutParams(dp(108), dp(32)));
+        body.addView(header, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        text("하단 중앙을 길게 눌러 선택한 앱을 엽니다.", 18);
         // Update banner: filled only when the automatic check on open finds a newer version.
         updateBanner = new LinearLayout(this);
         updateBanner.setOrientation(LinearLayout.VERTICAL);
@@ -136,7 +190,7 @@ public final class SetupActivity extends Activity {
             refresh();
         });
         text("하단 영역 인식은 투명한 터치 영역을 씁니다. ColorOS 기본 하단 바는 시스템 애니메이션을 그대로 쓰고, 기기 로그로 길게 누르기를 감지합니다. 3버튼 탐색에서는 홈 버튼을 길게 누르면 됩니다.\n"
-            + "3버튼 탐색에서 하단 영역 인식을 쓰면 홈 화면의 최근 앱 버튼을 영역이 가릴 수 있습니다.\n앱을 삭제하기 전에는 '끄기'를 먼저 눌러 원래 제스처 설정을 복구해주세요.", 14);
+            + "3버튼 탐색에서 하단 영역 인식을 쓰면 홈 화면의 최근 앱 버튼을 영역이 가릴 수 있으니, 터치 영역에서 위치를 옮겨주세요.\n앱을 삭제하기 전에는 '끄기'를 먼저 눌러 원래 제스처 설정을 복구해주세요.", 14);
 
         section("전원 버튼");
         powerSwitch = toggle("전원 버튼 길게 눌러 Gemini Assistant 열기", BarService.power(this), (view, checked) -> {
@@ -222,14 +276,14 @@ public final class SetupActivity extends Activity {
             preferences.edit().putBoolean("show_recent", checked).apply();
             applyRecentVisibility();
         });
-        text("이 설정 화면을 최근 앱 목록에 표시합니다. 앱 서랍에는 아이콘이 없습니다.\n최근 앱에서 이 앱 카드를 잠가 두면 '모두 닫기' 때 앱이 종료되지 않습니다. 잠근 뒤에는 표시를 꺼도 잠금이 유지됩니다.", 14);
+        text("이 설정 화면을 최근 앱 목록에 표시합니다. 앱 서랍 아이콘은 '바로 실행'에서 따로 켭니다.\n최근 앱에서 이 앱 카드를 잠가 두면 '모두 닫기' 때 앱이 종료되지 않습니다. 잠근 뒤에는 표시를 꺼도 잠금이 유지됩니다.", 14);
 
         section("연결 앱");
         targetLabel = text("", 18);
         button("앱 선택", this::chooseApp);
         text("기본값은 서클 투 서치 빠른 실행입니다. 다른 앱을 고르면 그 앱이 바로 열립니다.", 14);
         divider(section);
-        text("서클 투 서치를 쓰려면 Google 앱과 MiCTS를 설치하고, 기본 디지털 어시스턴트를 Google로 선택해주세요.", 14);
+        text("서클 투 서치를 쓰려면 Google 앱을 기본 디지털 어시스턴트로 선택해주세요. MiCTS는 필요 없으며, 설치되어 있으면 직접 실행이 실패했을 때만 예비로 씁니다.", 14);
         button("기본 어시스턴트 설정", () -> {
             try { startActivity(new Intent(Settings.ACTION_VOICE_INPUT_SETTINGS)); }
             catch (ActivityNotFoundException unavailable) {
@@ -237,6 +291,17 @@ public final class SetupActivity extends Activity {
                 startActivity(freshSettings(Settings.ACTION_SETTINGS));
             }
         });
+
+        section("바로 실행");
+        ComponentName drawer = new ComponentName(this, MainActivity.DRAWER);
+        toggle("앱 서랍에 표시", getPackageManager().getComponentEnabledSetting(drawer) == PackageManager.COMPONENT_ENABLED_STATE_ENABLED,
+            (view, checked) -> getPackageManager().setComponentEnabledSetting(drawer, checked
+                ? PackageManager.COMPONENT_ENABLED_STATE_ENABLED : PackageManager.COMPONENT_ENABLED_STATE_DISABLED, PackageManager.DONT_KILL_APP));
+        text("앱 서랍의 아이콘을 누르면 연결 앱 설정과 상관없이 서클 투 서치가 열립니다. 이 설정 화면은 아이콘을 길게 눌러 '설정'으로 엽니다. 끄면 앱 서랍에서 아이콘이 사라집니다.", 14);
+        divider(section);
+        button("빠른 설정에 Search 타일 추가", () -> addTile(LaunchTile.Search.class, "Search"));
+        button("빠른 설정에 Assistant 타일 추가", () -> addTile(LaunchTile.Assistant.class, "Assistant"));
+        text("Search는 서클 투 서치, Assistant는 Gemini Assistant를 엽니다. 잠겨 있으면 Search는 잠금 해제 후 열리고, Assistant는 '잠금 화면에서 Gemini Assistant 호출'을 켠 경우에만 잠금 화면 위에서 열립니다. Assistant는 전원 버튼 기능이 꺼져 있어도 동작합니다.", 14);
 
         section("추가 설정");
         bootSwitch = toggle("재부팅 후 자동 복구", BootRecovery.wanted(this), (view, checked) -> {
@@ -252,14 +317,7 @@ public final class SetupActivity extends Activity {
         button("최초 ADB 설정 안내", this::adbHelp);
         divider(section);
         button("접근성 설정", this::openAccessibility);
-        button("빠른 설정에 버튼 추가", () -> {
-            if (Build.VERSION.SDK_INT >= 33) {
-                getSystemService(StatusBarManager.class).requestAddTileService(
-                    new ComponentName(this, BarTile.class), "Circle-to-Search Trigger",
-                    Icon.createWithResource(this, android.R.drawable.ic_menu_search),
-                    getMainExecutor(), result -> { });
-            } else Toast.makeText(this, "빠른 설정의 편집 화면에서 Circle-to-Search Trigger 타일을 직접 추가해주세요.", Toast.LENGTH_LONG).show();
-        });
+        button("빠른 설정에 켜기/끄기 타일 추가", () -> addTile(BarTile.class, "Circle-to-Search Trigger"));
         button("자동 실행 설정", this::openAutoStart);
         button("앱 정보와 절전 설정", this::openAppInfo);
         button("최근 앱 정리 제외 설정", this::recentLockPrompt);
@@ -311,6 +369,7 @@ public final class SetupActivity extends Activity {
             showAdvanced.run();
         });
         section = experimental;
+        experimentalBox = experimental; // its warnings stay visible in Compact
         TextView experimentalTitle = text("⚠ 실험적 기능", 18);
         experimentalTitle.setTypeface(null, android.graphics.Typeface.BOLD);
         experimentalTitle.setTextColor(ERROR_COLOR);
@@ -340,6 +399,10 @@ public final class SetupActivity extends Activity {
         } catch (android.content.pm.PackageManager.NameNotFoundException unavailable) {
             text("버전 정보 없음", 14);
         }
+        TextView licenses = text("오픈소스 라이선스", 14);
+        licenses.setPaintFlags(licenses.getPaintFlags() | android.graphics.Paint.UNDERLINE_TEXT_FLAG);
+        licenses.setOnClickListener(v -> showLicenses());
+        showDetails(); // every card is built: apply Detail / Compact
         if (preferences.getBoolean(UPDATE_AUTO, true)) checkUpdate(true);
     }
 
@@ -506,6 +569,42 @@ public final class SetupActivity extends Activity {
         if (message != null) phrase(message);
     }
 
+    /** GPL-3.0 notice, source link and the bundled Apache-2.0 notice (shipped as res/raw, read locally). */
+    private void showLicenses() {
+        StringBuilder notice = new StringBuilder("이 앱은 GNU General Public License 3.0(GPL-3.0-only)으로 배포됩니다. "
+            + "보증 없이 제공되며, 소스 코드와 라이선스 전문은 아래 저장소에서 받을 수 있습니다.\n"
+            + "https://github.com/JngVedere/OPD2515_CST\n\n"
+            + "참고한 프로젝트(코드 미포함): ColorGoogle, MiCTS, MindTrigger Assist (모두 GPL-3.0)\n\n"
+            + "포함된 라이브러리: AndroidHiddenApiBypass 6.1 (LSPosed, Apache License 2.0)\n\n");
+        int raw = getResources().getIdentifier("notice_hidden_api_bypass", "raw", getPackageName());
+        if (raw != 0) {
+            try (java.io.InputStream in = getResources().openRawResource(raw)) {
+                notice.append(new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8));
+            } catch (java.io.IOException | RuntimeException unreadable) { }
+        }
+        LinearLayout panel = new LinearLayout(this);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setPadding(dp(24), dp(8), dp(24), 0);
+        block(panel, notice, true);
+        android.widget.ScrollView scroll = new android.widget.ScrollView(this);
+        scroll.addView(panel);
+        new AlertDialog.Builder(this).setTitle("오픈소스 라이선스").setView(scroll).setPositiveButton("닫기", null).show();
+    }
+
+    /** System "add tile" prompt (Android 13+), with the tile's own manifest icon; older versions add it from the edit screen. */
+    private void addTile(Class<?> tile, String label) {
+        ComponentName component = new ComponentName(this, tile);
+        if (Build.VERSION.SDK_INT < 33) {
+            Toast.makeText(this, "빠른 설정의 편집 화면에서 " + label + " 타일을 직접 추가해주세요.", Toast.LENGTH_LONG).show();
+            return;
+        }
+        int icon;
+        try { icon = getPackageManager().getServiceInfo(component, 0).getIconResource(); }
+        catch (PackageManager.NameNotFoundException missing) { icon = android.R.drawable.ic_menu_search; }
+        getSystemService(StatusBarManager.class).requestAddTileService(component, label,
+            Icon.createWithResource(this, icon == 0 ? android.R.drawable.ic_menu_search : icon), getMainExecutor(), result -> { });
+    }
+
     /** Translucent fills read on both light and dark backgrounds; blue is the preview colour. */
     private void showFacing(boolean active) {
         int color = active ? 0xFF2563EB : 0xFF8A8A8A;
@@ -519,6 +618,8 @@ public final class SetupActivity extends Activity {
         view.setText(value); view.setTextSize(size);
         view.setPadding(0, dp(5), 0, dp(9));
         if (size == 14) { view.setTextColor(secondary); view.setLineSpacing(dp(2), 1f); } // 14sp = description, like the status card detail.
+        // Card descriptions follow Detail / Compact; the footer (body) and the experimental box always show theirs.
+        if (size == 14 && section != body && section != experimentalBox) details.add(view);
         section.addView(view, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         return view;
     }
@@ -1091,7 +1192,7 @@ public final class SetupActivity extends Activity {
         if (shown[2]) records.append("[전원 버튼 두 번 누르기]\n").append(StatusPolicy.detail(preferences.getString(BarService.LAST_DOUBLE, null), now)).append("\n\n");
         showPhrased(new AlertDialog.Builder(this).setTitle("최근 실행 기록")
             .setMessage(records
-                + "경로마다 마지막 1건만 이 기기에 저장하며 외부로 보내지 않습니다. 앱은 실행 요청 전달과 Gemini 요청 수락까지만 확인하며,"
+                + "경로마다 마지막 1건만 이 기기에 저장하며 외부로 보내지 않습니다. 앱은 실행 요청 전달과 서클 투 서치·Gemini 요청 수락까지만 확인하며,"
                 + " 서클 투 서치나 Gemini 창이 실제로 떴는지는 확인하지 않습니다. Google 상태는 선택과 설치·사용 여부만 확인하며 실제 연결 상태는 알 수 없습니다."
                 + " 길게 눌렀는데 기록이 바뀌지 않았다면 입력이 감지되지 않았을 수 있으니 기기 로그 연결과 ColorOS 전원 버튼 음성 비서 호출 설정을 확인해보세요.")
             .setPositiveButton("닫기", null));

@@ -1,8 +1,8 @@
 {
     "Schema":  1,
     "Package":  "dev.padhelper.fastcts",
-    "Version":  "0.3.2-patch2",
-    "VersionCode":  21,
-    "FileName":  "Circle-to-Search-Trigger-0.3.2-patch2.apk",
-    "SHA256":  "9d3a0258f74a835df591fb0a1b83c99a858e8d5195e323b85ff8b7c2eeb0ad70"
+    "Version":  "0.3.6",
+    "VersionCode":  25,
+    "FileName":  "Circle-to-Search-Trigger-0.3.6.apk",
+    "SHA256":  "fc0a54aebb47ffeab97c8cef309d09bb4be523d0cddc62a3d87c1e7049ad39c0"
 }
