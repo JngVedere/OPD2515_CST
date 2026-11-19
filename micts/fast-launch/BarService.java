@@ -439,18 +439,28 @@ public final class BarService extends AccessibilityService {
      */
     private final Runnable logCheck = () -> {
         if (instance == this && logsWanted(this) && logsPermitted(this) && logs.state() != LogSession.ACTIVE)
-            Alerts.logMissing(this, "기기 로그 승인이 필요합니다", "ColorOS 기본 바·전원 버튼 실행이 멈춰 있습니다. 눌러서 설정에서 승인해주세요.");
+            Alerts.logMissing(this, true, "기기 로그 승인이 필요합니다", "ColorOS 기본 바·전원 버튼 실행이 멈춰 있습니다. 눌러서 승인해주세요.");
     };
-    private static final long LOG_CHECK_DELAY = 60_000;
+    /**
+     * After a decline the notice waits this long: the decline is seen only at the 35 s activation timeout, and Android
+     * silently declines new requests for about a minute after one (device), so an immediate tap would show no prompt.
+     */
+    private static final long LOG_CHECK_DELAY = 60_000, DECLINED_ALERT_DELAY = 30_000;
 
     private final LogSession.Listener logEvents = new LogSession.Listener() {
         @Override public void stateChanged(boolean declined) {
             powerRequest++; // A session change cancels a power request from the old session.
             if (declined) prefs(BarService.this).edit().putBoolean(LOG_DECLINED, true).apply();
             int state = logs.state();
-            if (state == LogSession.ACTIVE) Alerts.logRestored(BarService.this);
-            else if (logsWanted(BarService.this) && (declined || (logWasActive && state == LogSession.OFF)))
-                Alerts.logMissing(BarService.this, declined ? "기기 로그 승인이 거부되었습니다" : "기기 로그 연결이 끊겼습니다", "ColorOS 기본 바·전원 버튼 실행이 멈췄습니다. 눌러서 설정에서 다시 승인해주세요.");
+            if (state == LogSession.ACTIVE) {
+                // Approved after all: an earlier (possibly timed-out) decline no longer holds back later auto prompts.
+                prefs(BarService.this).edit().putBoolean(LOG_DECLINED, false).apply();
+                handler.removeCallbacks(logCheck);
+                Alerts.logRestored(BarService.this);
+            }
+            else if (declined) { handler.removeCallbacks(logCheck); handler.postDelayed(logCheck, DECLINED_ALERT_DELAY); }
+            else if (logsWanted(BarService.this) && logWasActive && state == LogSession.OFF)
+                Alerts.logMissing(BarService.this, true, "기기 로그 연결이 끊겼습니다", "ColorOS 기본 바·전원 버튼 실행이 멈췄습니다. 눌러서 다시 승인해주세요.");
             logWasActive = state == LogSession.ACTIVE;
             notifyState();
         }
@@ -523,17 +533,28 @@ public final class BarService extends AccessibilityService {
         } catch (RuntimeException | OutOfMemoryError unavailable) { Log.w("PadVoice", "warm-up thread unavailable"); }
     };
 
-    /** First unlock after boot (or after the session was lost): at most AUTO_PROMPTS bridge windows per boot. */
-    private void maybeAutoPrompt() {
+    /**
+     * First unlock after boot (or after the session was lost): at most AUTO_PROMPTS bridge windows per boot.
+     * afterUnlock: a fresh unlock the user just made also retries after a "decline". Device: after boot the USB dialog
+     * and ColorOS's accessibility warning took focus, the unanswered confirmation timed out and counted as declined,
+     * which stopped every later prompt that boot. The per-boot cap still bounds a real refusal.
+     */
+    private void maybeAutoPrompt() { maybeAutoPrompt(false); }
+
+    private void maybeAutoPrompt(boolean afterUnlock) {
         SharedPreferences bar = prefs(this);
         int boot = Settings.Global.getInt(getContentResolver(), Settings.Global.BOOT_COUNT, -1);
         if (bar.getInt(LOG_BOOT, -2) != boot)
             bar.edit().putInt(LOG_BOOT, boot).putInt(LOG_AUTO, 0).putBoolean(LOG_DECLINED, false).apply();
         int attempts = bar.getInt(LOG_AUTO, 0);
         PowerManager power = getSystemService(PowerManager.class);
+        boolean declined = !afterUnlock && bar.getBoolean(LOG_DECLINED, false);
         if (!LogTrigger.autoPrompt(granted(this) && logsWanted(this), logsPermitted(this), logs.state() != LogSession.OFF,
                 bridgeShowing(), power.isInteractive(), getSystemService(KeyguardManager.class).isKeyguardLocked(),
-                bar.getBoolean(LOG_DECLINED, false), attempts)) return;
+                declined, attempts)) {
+            Log.i("PadLog", "auto prompt skipped: state=" + logs.state() + " declined=" + declined + " attempts=" + attempts);
+            return;
+        }
         bar.edit().putInt(LOG_AUTO, attempts + 1).apply();
         launchBridge(this);
     }
@@ -541,10 +562,34 @@ public final class BarService extends AccessibilityService {
     private final BroadcastReceiver screen = new BroadcastReceiver() {
         @Override public void onReceive(Context context, Intent intent) {
             // The log session stays open across screen changes; only the touch window and OEM gesture follow the screen.
-            if (Intent.ACTION_SCREEN_OFF.equals(intent.getAction())) { cancelPending(); detach(); powerRequest++; }
+            if (Intent.ACTION_SCREEN_OFF.equals(intent.getAction())) { cancelPending(); detach(); powerRequest++; handler.removeCallbacks(unlockWatch); }
             configure();
-            if (Intent.ACTION_SCREEN_ON.equals(intent.getAction()) && warmOnScreen) googleDied();
+            if (Intent.ACTION_SCREEN_ON.equals(intent.getAction())) {
+                if (warmOnScreen) googleDied();
+                unlockPolls = 0;
+                handler.removeCallbacks(unlockWatch);
+                if (logsWanted(BarService.this) && logsPermitted(BarService.this) && logs.state() == LogSession.OFF)
+                    handler.postDelayed(unlockWatch, UNLOCK_POLL);
+            }
             if (Intent.ACTION_USER_PRESENT.equals(intent.getAction())) maybeAutoPrompt();
+        }
+    };
+
+    /**
+     * Device (ColorOS 17): USER_PRESENT to this service was skipped ("oplus skip sp"), so a session lost while the screen
+     * was off never got its prompt on unlock. While the screen is on, locked and a wanted session is off, the keyguard is
+     * checked once a second (at most UNLOCK_POLLS times); the first unlocked check runs the normal capped auto prompt.
+     */
+    private static final long UNLOCK_POLL = 1000;
+    private static final int UNLOCK_POLLS = 60;
+    private int unlockPolls;
+    private final Runnable unlockWatch = new Runnable() {
+        @Override public void run() {
+            if (instance != BarService.this || !getSystemService(PowerManager.class).isInteractive()) return;
+            if (!getSystemService(KeyguardManager.class).isKeyguardLocked()) {
+                Log.i("PadLog", "unlock seen after screen on: auto prompt check");
+                maybeAutoPrompt(true);
+            } else if (++unlockPolls < UNLOCK_POLLS) handler.postDelayed(this, UNLOCK_POLL);
         }
     };
 
@@ -582,7 +627,7 @@ public final class BarService extends AccessibilityService {
         running = enabled(this);
         Alerts.scheduleUpdateCheck(this); // restores the job after a force-stop or reinstall cleared it
         // An option that reads device logs is on, but the one-time ADB grant is missing (reinstall, revoke).
-        if (logsWanted(this) && !logsPermitted(this)) Alerts.logMissing(this, "기기 로그 권한이 없습니다",
+        if (logsWanted(this) && !logsPermitted(this)) Alerts.logMissing(this, false, "기기 로그 권한이 없습니다",
             "ColorOS 기본 바·전원 버튼 실행에 필요합니다. 눌러서 최초 ADB 설정 안내를 확인해주세요.");
         handler.removeCallbacks(logCheck);
         handler.postDelayed(logCheck, LOG_CHECK_DELAY);
@@ -702,6 +747,7 @@ public final class BarService extends AccessibilityService {
         powerRequest++;
         handler.removeCallbacks(warm);
         handler.removeCallbacks(logCheck);
+        handler.removeCallbacks(unlockWatch);
         running = false;
         cancelPending();
         detach();

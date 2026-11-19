@@ -34,9 +34,21 @@ final class Alerts {
 
     static boolean wanted(Context context, String key) { return prefs(context).getBoolean(key, false); }
 
-    /** Device-log access missing: posted only when the user turned this notification on. */
-    static void logMissing(Context context, String title, String text) {
-        if (wanted(context, LOG)) post(context, LOG_MISSING, "log", "기기 로그 권한", title, text);
+    /**
+     * Device-log access missing: posted only when the user turned this notification on. approve: the tap opens the same
+     * internal bridge as the settings button, so Android's own confirmation appears directly (the user still answers it).
+     * Without the ADB grant a confirmation cannot help, so the tap opens settings instead.
+     */
+    static void logMissing(Context context, boolean approve, String title, String text) {
+        if (!wanted(context, LOG)) return;
+        post(context, LOG_MISSING, "log", "기기 로그 권한", title, text, approve
+            ? new Intent(context, LogAccessActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_NO_ANIMATION)
+            : settings(context));
+    }
+
+    // Settings with no extras: that exported screen ignores intent extras by design.
+    private static Intent settings(Context context) {
+        return new Intent(context, SetupActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
     }
 
     static void logRestored(Context context) {
@@ -91,7 +103,7 @@ final class Alerts {
                     prefs(app).edit().putLong(NOTIFIED_CODE, release.code).putBoolean(PENDING, true).apply();
                     post(app, NEW_VERSION, "update", "업데이트",
                         (release.beta ? "새 베타 업데이트 · " : "새로운 업데이트 · ") + release.version,
-                        "눌러서 설정 화면에서 설치할 수 있습니다.");
+                        "눌러서 설정 화면에서 설치할 수 있습니다.", settings(app));
                 } catch (Exception failed) {
                     Log.i("PadAlerts", "update check failed: " + failed.getClass().getSimpleName());
                 } finally { done.run(); }
@@ -106,12 +118,11 @@ final class Alerts {
         return true;
     }
 
-    // The tap opens the settings screen with no extras: that exported screen ignores intent extras by design.
-    private static void post(Context context, int id, String channel, String channelName, String title, String text) {
+    /** open: an explicit intent to one of this app's own activities, without extras. */
+    private static void post(Context context, int id, String channel, String channelName, String title, String text, Intent open) {
         NotificationManager manager = context.getSystemService(NotificationManager.class);
         if (manager == null || !manager.areNotificationsEnabled()) return;
         manager.createNotificationChannel(new NotificationChannel(channel, channelName, NotificationManager.IMPORTANCE_DEFAULT));
-        Intent open = new Intent(context, SetupActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
         PendingIntent tap = PendingIntent.getActivity(context, id, open, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
         int icon = context.getResources().getIdentifier("ic_tile_assistant", "drawable", context.getPackageName()); // no R class in this build
         manager.notify(id, new Notification.Builder(context, channel)

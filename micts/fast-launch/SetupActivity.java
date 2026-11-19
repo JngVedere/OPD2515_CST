@@ -356,7 +356,7 @@ public final class SetupActivity extends Activity {
         section("알림");
         logAlert = toggle("기기 로그 권한이 없을 때 알림 받기", Alerts.wanted(this, Alerts.LOG),
             (view, checked) -> alertChanged(Alerts.LOG, checked));
-        text("ColorOS 기본 바나 전원 버튼처럼 기기 로그가 필요한 옵션이 켜져 있는데 기기 로그 권한이 없거나, 1분이 지나도 승인되지 않았거나, 승인이 거부되거나, 연결이 끊기면 알려줍니다.", 14);
+        text("ColorOS 기본 바나 전원 버튼처럼 기기 로그가 필요한 옵션이 켜져 있는데 기기 로그 권한이 없거나, 1분이 지나도 승인되지 않았거나, 승인이 거부되거나, 연결이 끊기면 알려줍니다. 알림을 누르면 바로 기기 로그 확인 창이 뜹니다 (ADB 권한이 없을 때는 설정 화면).", 14);
         divider(section);
         updateAlert = toggle("새로운 업데이트가 있을 때 알림 받기", Alerts.wanted(this, Alerts.UPDATE),
             (view, checked) -> alertChanged(Alerts.UPDATE, checked));
@@ -1076,6 +1076,12 @@ public final class SetupActivity extends Activity {
         startActivity(freshSettings(Settings.ACTION_SETTINGS));
     }
 
+    /** App info, where the ⋮ menu holds '제한된 설정 허용' (shown only while the restriction applies). */
+    private void openRestrictedSettings() {
+        Toast.makeText(this, "오른쪽 위 ⋮ → '제한된 설정 허용'을 눌러주세요. 메뉴가 없으면 접근성에서 한 번 켜기를 시도한 뒤 다시 열어주세요.", Toast.LENGTH_LONG).show();
+        startActivity(freshSettings(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).setData(Uri.parse("package:" + getPackageName())));
+    }
+
     private void openAppInfo() {
         Toast.makeText(this, "배터리 사용량 → 백그라운드 활동 허용을 켜주세요.", Toast.LENGTH_LONG).show();
         startActivity(freshSettings(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).setData(Uri.parse("package:" + getPackageName())));
@@ -1130,7 +1136,8 @@ public final class SetupActivity extends Activity {
 
     private void recentLockPrompt() {
         showPhrased(new AlertDialog.Builder(this).setTitle("최근 앱 정리 제외")
-            .setMessage("1. '지금 설정'을 누르면 이 화면이 최근 앱 목록에 표시됩니다.\n2. 최근 앱 화면에서 Circle-to-Search Trigger 이름을 눌러 '잠금'을 선택합니다.\n3. 필요하면 '최근 앱에 표시'를 다시 끕니다. 잠금은 유지됩니다.\n\n잠그지 않으면 '모두 닫기' 때 앱이 종료되어 기기 로그를 다시 승인해야 합니다.")
+            .setMessage("1. '지금 설정'을 누르면 이 화면이 최근 앱 목록에 표시됩니다.\n2. 최근 앱 화면에서 Circle-to-Search Trigger 이름을 눌러 '잠금'을 선택합니다.\n3. 필요하면 '최근 앱에 표시'를 다시 끕니다. 잠금은 유지됩니다.\n\n잠그지 않으면 '모두 닫기' 때 앱이 종료되어 "
+                + (BarService.logsWanted(this) ? "기기 로그를 다시 승인해야 합니다." : "다시 실행될 때까지 잠시 동작하지 않을 수 있습니다."))
             .setPositiveButton("지금 설정", (dialog, which) -> {
                 recentSwitch.setChecked(true);
                 Toast.makeText(this, "최근 앱 화면에서 이 앱 이름을 눌러 '잠금'을 선택해주세요.", Toast.LENGTH_LONG).show();
@@ -1144,8 +1151,13 @@ public final class SetupActivity extends Activity {
     private void refreshWarnings() {
         warnings.removeAllViews();
         if (!BarService.granted(this))
+        {
             warn("접근성이 꺼져 있습니다", "눌러서 Circle-to-Search Trigger를 켜주세요.", this::openAccessibility);
-        else if (!BarService.serviceRunning())
+            // Android blocks accessibility once for apps installed from a browser or file manager ("restricted settings");
+            // whether it applies cannot be read by the app, so the way out is offered while accessibility is off.
+            // Device (Android 17): the entry is greyed out and tapping it shows "앱의 액세스가 거부됨".
+            warn("켜려고 하면 '앱의 액세스가 거부됨'이 뜨나요?", "브라우저나 파일 관리자로 설치하면 걸리는 '제한된 설정'입니다. 눌러서 앱 정보를 연 뒤 오른쪽 위 ⋮ → '제한된 설정 허용'을 누르고 다시 켜주세요.", this::openRestrictedSettings);
+        } else if (!BarService.serviceRunning())
             // Device: granting READ_LOGS over ADB kills the process ("changed gids"); Android then marks the service
             // crashed and never rebinds it until the user toggles it.
             warn("접근성이 작동하지 않습니다", "권한을 새로 받은 뒤 멈출 수 있습니다. 눌러서 Circle-to-Search Trigger를 껐다가 다시 켜주세요.", this::openAccessibility);
@@ -1166,7 +1178,8 @@ public final class SetupActivity extends Activity {
         } else if (!preferences.getBoolean(AUTOSTART_CONFIRMED, false))
             warn("자동 실행이 켜져 있는지 확인해주세요", "꺼져 있으면 재부팅 후 접근성이 꺼질 수 있습니다. 앱이 이 설정을 직접 읽을 수 없어 한 번 확인이 필요합니다.", this::autoStartPrompt);
         if (cleanupKilled())
-            warn("최근 앱 정리로 앱이 종료되었습니다", "기기 로그를 다시 승인해야 합니다. 최근 앱에서 이 앱 카드를 잠가 두면 막을 수 있습니다. 눌러서 방법 보기", this::recentLockPrompt);
+            // Re-approval only matters when an option reads device logs (ColorOS bar, power button).
+            warn("최근 앱 정리로 앱이 종료되었습니다", (BarService.logsWanted(this) ? "기기 로그를 다시 승인해야 합니다. " : "") + "최근 앱에서 이 앱 카드를 잠가 두면 막을 수 있습니다. 눌러서 방법 보기", this::recentLockPrompt);
         warnings.setVisibility(warnings.getChildCount() == 0 ? android.view.View.GONE : android.view.View.VISIBLE);
     }
 

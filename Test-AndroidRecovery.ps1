@@ -833,7 +833,9 @@ if ($alerts -cmatch 'startForeground|setOngoing|FOREGROUND_SERVICE|AlarmManager|
     $alerts -match 'setRequiredNetworkType|setRequiresCharging|setRequiresBatteryNotLow' -or
     $alerts -notmatch '\.setPeriodic\(StatusPolicy\.UPDATE_INTERVAL\)' -or $alerts -notmatch 'PendingIntent\.FLAG_IMMUTABLE' -or
     # The log alert is posted only while its switch is on.
-    $alerts -notmatch 'if \(wanted\(context, LOG\)\) post\(' -or
+    $alerts -notmatch 'if \(!wanted\(context, LOG\)\) return;' -or
+    # A tap opens only this app's settings screen or its log approval bridge, never anything else.
+    ((@([regex]::Matches($alerts, 'new Intent\(context, (\w+)\.class\)') | ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique)) -join ',') -cne 'LogAccessActivity,SetupActivity' -or
     -not $updateJob -or $updateJob.GetAttribute('exported',$androidNs) -ne 'false' -or $updateJob.GetAttribute('permission',$androidNs) -ne 'android.permission.BIND_JOB_SERVICE' -or
     @($allSources.Keys | Where-Object { $allSources[$_] -match 'requestPermissions\(' }) -join ',' -cne 'SetupActivity.java' -or
     @($allSources.Keys | Where-Object { $_ -ne 'Alerts.java' -and $allSources[$_] -match 'Alerts\.maybeCheckUpdate\(' }).Count -ne 0) {
