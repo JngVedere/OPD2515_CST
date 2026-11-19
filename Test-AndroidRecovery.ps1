@@ -682,7 +682,7 @@ if (-not $bridge -or $bridge.GetAttribute('exported',$namespaces.LookupNamespace
 }
 $securityChecks++
 $permissions = @($manifest.SelectNodes('/manifest/uses-permission',$namespaces) | ForEach-Object { $_.GetAttribute('name',$namespaces.LookupNamespace('android')) } | Sort-Object)
-if (($permissions -join ',') -cne 'android.permission.INTERNET,android.permission.READ_LOGS,android.permission.RECEIVE_BOOT_COMPLETED,android.permission.REQUEST_INSTALL_PACKAGES,android.permission.WRITE_SECURE_SETTINGS') {
+if (($permissions -join ',') -cne 'android.permission.INTERNET,android.permission.POST_NOTIFICATIONS,android.permission.READ_LOGS,android.permission.RECEIVE_BOOT_COMPLETED,android.permission.REQUEST_INSTALL_PACKAGES,android.permission.WRITE_SECURE_SETTINGS') {
     throw ('Unexpected permission set: ' + ($permissions -join ','))
 }
 $securityChecks++
@@ -710,15 +710,16 @@ if (($network -join ',') -cne 'AppUpdate.java') { throw ('Network code is allowe
 $hosts = @([regex]::Matches($allSources['AppUpdate.java'], 'https://[^"/]+') | ForEach-Object { $_.Value } | Sort-Object -Unique)
 if (($hosts -join ',') -cne 'https://github.com,https://raw.githubusercontent.com') { throw ('Updater may contact only GitHub: ' + ($hosts -join ',')) }
 $updateUsers = @($allSources.Keys | Where-Object { $_ -ne 'AppUpdate.java' -and $allSources[$_] -match 'AppUpdate\.(check|install)\(' } | Sort-Object)
-if (($updateUsers -join ',') -cne 'SetupActivity.java' -or
+# Alerts (opt-in, 24 h) may only check; installing stays a tap in the settings screen.
+if (($updateUsers -join ',') -cne 'Alerts.java,SetupActivity.java' -or $allSources['Alerts.java'] -match 'AppUpdate\.install\(' -or
     $allSources['SetupActivity.java'] -notmatch 'button\("업데이트 확인", this::checkUpdate\)' -or
     ([regex]::Matches($allSources['SetupActivity.java'], 'checkUpdate\(true\)')).Count -ne 1 -or
-    $allSources['SetupActivity.java'] -notmatch 'if \(preferences\.getBoolean\(UPDATE_AUTO, true\)\) checkUpdate\(true\);' -or
+    $allSources['SetupActivity.java'] -notmatch 'if \(Alerts\.takePendingUpdate\(this\) \|\| preferences\.getBoolean\(UPDATE_AUTO, true\)\) checkUpdate\(true\);' -or
     $allSources['SetupActivity.java'] -notmatch 'if \(auto\) \{ if \(failure == null && release != null\) showUpdateBanner\(release\); return; \}' -or
     ([regex]::Matches($allSources['SetupActivity.java'], 'installUpdate\(release\)')).Count -ne 2 -or
     $allSources['AppUpdate.java'] -notmatch '(?s)if \(!hex\(digest\.digest\(\)\)\.equals\(release\.sha256\)\) throw[^;]*;.*session\.commit\(' -or
     $allSources['AppUpdate.java'] -notmatch 'if \(!committed\) installer\.abandonSession\(id\);') {
-    throw 'Updates run only from the settings screen (button or opt-out check on open), install only on a tap, and a session is committed only after the SHA-256 matches'
+    throw 'Updates are checked only from the settings screen or the opt-in 24 h alert, install only on a tap, and a session is committed only after the SHA-256 matches'
 }
 $updateReceiver = $manifest.SelectSingleNode('/manifest/application/receiver[@android:name=".AppUpdate$Result"]',$namespaces)
 if (-not $updateReceiver -or $updateReceiver.GetAttribute('exported',$namespaces.LookupNamespace('android')) -ne 'false' -or $updateReceiver.SelectNodes('intent-filter').Count -ne 0) {
@@ -816,6 +817,27 @@ if (([regex]::Matches($joinedSources, '"showSessionFromSession"')).Count -ne 2 -
     $cts -notmatch 'private static final int FLAGS = 7;' -or $cts -notmatch 'args\.putInt\(ENTRY_KEY, ENTRY\);' -or
     $cts -notmatch 'args\.putLong\("invocation_time_ms", SystemClock\.elapsedRealtime\(\)\);') {
     throw 'Circle to Search direct call: one hidden call site, unlocked screen and Google assistant only'
+}
+$securityChecks++
+# Optional alerts: off by default, permission asked only from the settings switch, plain dismissible notifications only,
+# the update check a non-exported 24 h job behind the 24 h guard, and the tap opens settings without extras.
+$alerts = $allSources['Alerts.java']
+$androidNs = $namespaces.LookupNamespace('android')
+$updateJob = $manifest.SelectSingleNode('/manifest/application/service[@android:name=".Alerts$UpdateJob"]',$namespaces)
+if ($alerts -cmatch 'startForeground|setOngoing|FOREGROUND_SERVICE|AlarmManager|WorkManager|putExtra\(' -or
+    $alerts -notmatch 'getBoolean\(key, false\)' -or
+    $alerts -notmatch 'if \(!bar\.getBoolean\(UPDATE, false\) \|\| !StatusPolicy\.updateCheckDue\(now, bar\.getLong\(CHECKED_AT, 0\)\)\) \{ done\.run\(\); return; \}' -or
+    $alerts -notmatch 'if \(!wanted\(context, UPDATE\)\) \{ jobs\.cancel\(UPDATE_JOB\); return; \}' -or
+    # Runs inside onServiceConnected: scheduling must be guarded, and no constraint that needs an undeclared permission.
+    $alerts -notmatch '(?s)static void scheduleUpdateCheck\(Context context\) \{\s*try \{.*\} catch \(RuntimeException unavailable\)' -or
+    $alerts -match 'setRequiredNetworkType|setRequiresCharging|setRequiresBatteryNotLow' -or
+    $alerts -notmatch '\.setPeriodic\(StatusPolicy\.UPDATE_INTERVAL\)' -or $alerts -notmatch 'PendingIntent\.FLAG_IMMUTABLE' -or
+    # The log alert is posted only while its switch is on.
+    $alerts -notmatch 'if \(wanted\(context, LOG\)\) post\(' -or
+    -not $updateJob -or $updateJob.GetAttribute('exported',$androidNs) -ne 'false' -or $updateJob.GetAttribute('permission',$androidNs) -ne 'android.permission.BIND_JOB_SERVICE' -or
+    @($allSources.Keys | Where-Object { $allSources[$_] -match 'requestPermissions\(' }) -join ',' -cne 'SetupActivity.java' -or
+    @($allSources.Keys | Where-Object { $_ -ne 'Alerts.java' -and $allSources[$_] -match 'Alerts\.maybeCheckUpdate\(' }).Count -ne 0) {
+    throw 'Alerts: opt-in, permission only from settings, plain notifications, 24 h job only while the update alert is on'
 }
 $securityChecks++
 # The bottom trigger (CTS / chosen app) stays unlocked-only regardless of the locked-screen option.

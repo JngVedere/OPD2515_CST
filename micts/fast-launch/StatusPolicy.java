@@ -180,4 +180,12 @@ final class StatusPolicy {
             return new Record(id, Long.parseLong(f[1]), Long.parseLong(f[2]), outcome, f[4], f[5]);
         } catch (NumberFormatException invalid) { return null; }
     }
+
+    /** Optional update notification: one GitHub check per 24 h (Alerts). */
+    static final long UPDATE_INTERVAL = 24L * 60 * 60 * 1000;
+
+    /** Due when no check ran yet, the clock went backwards (never stuck in the future), or a full interval has passed. */
+    static boolean updateCheckDue(long now, long lastCheck) {
+        return lastCheck <= 0 || now < lastCheck || now - lastCheck >= UPDATE_INTERVAL;
+    }
 }

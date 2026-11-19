@@ -118,6 +118,12 @@ public final class LogTriggerHarness {
         check(TouchArea.MIN_HOLD == 50 && TouchArea.hold(10) == 50 && TouchArea.hold(-5) == 50 && TouchArea.hold(50) == 50
             && TouchArea.hold(5000) == TouchArea.MAX_HOLD && TouchArea.hold(420) == 420, "Hold time is bounded (50-1000 ms)");
         check(TouchArea.settle(-1) == 0 && TouchArea.settle(99999) == TouchArea.MAX_SETTLE, "Gemini wait is bounded");
+        // Update alert: at most one GitHub check per 24 h; never stuck when the clock moves backwards.
+        long day = StatusPolicy.UPDATE_INTERVAL, t0 = 1_800_000_000_000L;
+        check(day == 86_400_000L && StatusPolicy.updateCheckDue(t0, 0), "First update check is due");
+        check(!StatusPolicy.updateCheckDue(t0 + day - 1, t0) && !StatusPolicy.updateCheckDue(t0 + 60_000, t0), "No second check within 24 h");
+        check(StatusPolicy.updateCheckDue(t0 + day, t0) && StatusPolicy.updateCheckDue(t0 + 3 * day, t0), "Due again after 24 h");
+        check(StatusPolicy.updateCheckDue(t0 - 1, t0), "A clock set backwards does not block checks");
         check(TouchArea.taskbar("1", "3") && TouchArea.taskbar("1", null), "Gesture bar with the taskbar on: wide default");
         check(!TouchArea.taskbar("1", "0") && !TouchArea.taskbar("0", "3") && !TouchArea.taskbar(null, "3") && !TouchArea.taskbar("true", "3"), "3-button, taskbar off or unreadable: narrow default");
         check(TouchArea.fallback("width", true, false) == 240 && TouchArea.fallback("width", true, true) == 330

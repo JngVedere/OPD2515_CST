@@ -430,10 +430,28 @@ public final class BarService extends AccessibilityService {
         sendBroadcast(new Intent(STATE_CHANGED).setPackage(getPackageName()));
     }
 
+    /** Main thread: the log session was ACTIVE at the last state change, so a drop to OFF is a lost connection. */
+    private boolean logWasActive;
+
+    /**
+     * A minute after the service connects, a wanted session that is still not approved. Device: after an update installed
+     * while locked, no prompt could show and the unlock broadcast was skipped, so the session stayed off with no decline.
+     */
+    private final Runnable logCheck = () -> {
+        if (instance == this && logsWanted(this) && logsPermitted(this) && logs.state() != LogSession.ACTIVE)
+            Alerts.logMissing(this, "기기 로그 승인이 필요합니다", "ColorOS 기본 바·전원 버튼 실행이 멈춰 있습니다. 눌러서 설정에서 승인해주세요.");
+    };
+    private static final long LOG_CHECK_DELAY = 60_000;
+
     private final LogSession.Listener logEvents = new LogSession.Listener() {
         @Override public void stateChanged(boolean declined) {
             powerRequest++; // A session change cancels a power request from the old session.
             if (declined) prefs(BarService.this).edit().putBoolean(LOG_DECLINED, true).apply();
+            int state = logs.state();
+            if (state == LogSession.ACTIVE) Alerts.logRestored(BarService.this);
+            else if (logsWanted(BarService.this) && (declined || (logWasActive && state == LogSession.OFF)))
+                Alerts.logMissing(BarService.this, declined ? "기기 로그 승인이 거부되었습니다" : "기기 로그 연결이 끊겼습니다", "ColorOS 기본 바·전원 버튼 실행이 멈췄습니다. 눌러서 설정에서 다시 승인해주세요.");
+            logWasActive = state == LogSession.ACTIVE;
             notifyState();
         }
         @Override public void trigger(int kind) {
@@ -562,6 +580,12 @@ public final class BarService extends AccessibilityService {
         instance = this;
         prefs(this).edit().putBoolean(BootRecovery.APPROVED, true).remove("native_bar").apply();
         running = enabled(this);
+        Alerts.scheduleUpdateCheck(this); // restores the job after a force-stop or reinstall cleared it
+        // An option that reads device logs is on, but the one-time ADB grant is missing (reinstall, revoke).
+        if (logsWanted(this) && !logsPermitted(this)) Alerts.logMissing(this, "기기 로그 권한이 없습니다",
+            "ColorOS 기본 바·전원 버튼 실행에 필요합니다. 눌러서 최초 ADB 설정 안내를 확인해주세요.");
+        handler.removeCallbacks(logCheck);
+        handler.postDelayed(logCheck, LOG_CHECK_DELAY);
         notifyState(); // configure + refresh any visible settings screen (it may predate this connection)
         maybeAutoPrompt();
     }
@@ -677,6 +701,7 @@ public final class BarService extends AccessibilityService {
         if (instance == this) instance = null;
         powerRequest++;
         handler.removeCallbacks(warm);
+        handler.removeCallbacks(logCheck);
         running = false;
         cancelPending();
         detach();

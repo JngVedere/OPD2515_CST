@@ -353,6 +353,14 @@ public final class SetupActivity extends Activity {
         divider(section);
         button("업데이트 확인", this::checkUpdate);
         text("GitHub에서 새 버전 정보만 받아오며, 기기 정보는 보내지 않습니다. 새 버전은 파일 검증 후 Android 설치 화면으로 설치합니다.\n처음 한 번은 '출처를 알 수 없는 앱 설치' 허용이 필요하고, 업데이트 후에는 기기 로그 승인을 다시 해야 합니다.", 14);
+        section("알림");
+        logAlert = toggle("기기 로그 권한이 없을 때 알림 받기", Alerts.wanted(this, Alerts.LOG),
+            (view, checked) -> alertChanged(Alerts.LOG, checked));
+        text("ColorOS 기본 바나 전원 버튼처럼 기기 로그가 필요한 옵션이 켜져 있는데 기기 로그 권한이 없거나, 1분이 지나도 승인되지 않았거나, 승인이 거부되거나, 연결이 끊기면 알려줍니다.", 14);
+        divider(section);
+        updateAlert = toggle("새로운 업데이트가 있을 때 알림 받기", Alerts.wanted(this, Alerts.UPDATE),
+            (view, checked) -> alertChanged(Alerts.UPDATE, checked));
+        text("24시간에 한 번만 GitHub에서 새 버전을 확인합니다. 그때 인터넷이 끊겨 있으면 다음 확인은 24시간 뒤입니다. 같은 버전은 한 번만 알려주며, '베타 버전도 확인' 설정을 따릅니다.", 14);
         section("고급");
         // Experimental: changes system power-key settings. Red outline so the risk is visible before reading anything.
         LinearLayout experimental = new LinearLayout(this);
@@ -422,12 +430,46 @@ public final class SetupActivity extends Activity {
         licenses.setPaintFlags(licenses.getPaintFlags() | android.graphics.Paint.UNDERLINE_TEXT_FLAG);
         licenses.setOnClickListener(v -> showLicenses());
         showDetails(); // every card is built: apply Detail / Compact
-        if (preferences.getBoolean(UPDATE_AUTO, true)) checkUpdate(true);
+        // takePendingUpdate first: an update notification always gets its banner, even with the auto check off.
+        if (Alerts.takePendingUpdate(this) || preferences.getBoolean(UPDATE_AUTO, true)) checkUpdate(true);
     }
 
     /** Main thread only: one check or download at a time. */
     private boolean updating;
-    private static final String UPDATE_BETA = "update_beta", UPDATE_AUTO = "update_auto";
+    static final String UPDATE_BETA = "update_beta";
+    private static final String UPDATE_AUTO = "update_auto";
+
+    private Switch logAlert, updateAlert;
+    private static final int NOTIFY_REQUEST = 41;
+
+    /** Turning either alert on asks for the notification permission when it is missing (Android 13+). */
+    private void alertChanged(String key, boolean checked) {
+        if (syncing) return;
+        preferences.edit().putBoolean(key, checked).apply();
+        Alerts.scheduleUpdateCheck(this);
+        if (!checked) return;
+        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED)
+            requestPermissions(new String[]{android.Manifest.permission.POST_NOTIFICATIONS}, NOTIFY_REQUEST);
+        else if (!getSystemService(android.app.NotificationManager.class).areNotificationsEnabled()) openNotificationSettings();
+    }
+
+    private void openNotificationSettings() {
+        Toast.makeText(this, "알림이 꺼져 있습니다. 알림을 허용해주세요.", Toast.LENGTH_LONG).show();
+        try { startActivity(new Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, getPackageName())); }
+        catch (ActivityNotFoundException missing) { openAppInfo(); }
+    }
+
+    @Override public void onRequestPermissionsResult(int request, String[] permissions, int[] results) {
+        super.onRequestPermissionsResult(request, permissions, results);
+        if (request != NOTIFY_REQUEST || (results.length > 0 && results[0] == PackageManager.PERMISSION_GRANTED)) return;
+        // Denied: the alerts cannot be shown, so both switch back off. Once Android stops asking, send the user to settings.
+        preferences.edit().putBoolean(Alerts.LOG, false).putBoolean(Alerts.UPDATE, false).apply();
+        Alerts.scheduleUpdateCheck(this);
+        setSynced(logAlert, false);
+        setSynced(updateAlert, false);
+        if (!shouldShowRequestPermissionRationale(android.Manifest.permission.POST_NOTIFICATIONS)) openNotificationSettings();
+        else Toast.makeText(this, "알림 권한이 없어 알림을 켜지 않았습니다.", Toast.LENGTH_SHORT).show();
+    }
     private static final int UPDATE_COLOR = 0xFF16A34A;
 
     private void checkUpdate() { checkUpdate(false); }

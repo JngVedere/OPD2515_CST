@@ -1,5 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="dev.padhelper.fastcts">
+    <!-- Optional alerts (settings -> 알림, both off by default): missing device-log access and a new version. Asked for
+         only when the user turns one on; never a persistent or foreground notification. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS" />
     <!-- Development permission granted once over ADB; each new log session still needs Android's own confirmation. -->
@@ -88,5 +91,8 @@
                 <action android:name="android.service.quicksettings.action.QS_TILE" />
             </intent-filter>
         </service>
+        <!-- Optional update alert: the 24 h check, run only by the system job scheduler while that alert is on. -->
+        <service android:name=".Alerts$UpdateJob" android:exported="false"
+            android:permission="android.permission.BIND_JOB_SERVICE" />
     </application>
 </manifest>
