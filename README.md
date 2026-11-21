@@ -232,6 +232,6 @@ A7.브라우저나 파일 관리자로 직접 설치한 앱에 Android가 적용
 
 | 도구 | 사용 모델|활용 방식 |
 | --- | --- | --- |
-| **CHATGPT** | GPT Sol 6.1 xhigh,high|요구사항 정리와 작업 조율, 앱 구현·수정, ADB를 통한 실기기 테스트와 문제 확인에 활용했습니다. |
+| **CHATGPT** | GPT Sol 6.1 high|요구사항 정리와 작업 조율, 앱 구현·수정, ADB를 통한 실기기 테스트와 문제 확인에 활용했습니다. |
 | **CLAUDE** | Claude Opus 5.5 high|일부 개발 작업을 위임하고, 코드 리뷰와 버그 분석을 요청하는 데 활용했습니다. |
-| **GEMINI** |Gemini 4 Hydrogen Chat|문서 검토에 활용했습니다. |
+| **GEMINI** |Gemini 4 Neon Chat|문서 검토에 활용했습니다. |
