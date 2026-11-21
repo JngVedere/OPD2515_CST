@@ -26,7 +26,8 @@ public final class LogAccessActivity extends Activity {
     private final Handler handler = new Handler(Looper.getMainLooper());
     private boolean resumed, focused, requested, finished;
     private final Runnable request = this::requestOnce;
-    private final Runnable noFocus = () -> { if (!requested) end(); }; // Another window kept focus; settings offer a manual retry.
+    // Another window kept focus (device: ColorOS's post-boot accessibility warning): nothing was asked, so try again soon.
+    private final Runnable noFocus = () -> { if (!requested) { BarService.logBridgeUnused(); end(); } };
     private final BroadcastReceiver state = new BroadcastReceiver() {
         @Override public void onReceive(Context context, Intent intent) {
             if (requested && BarService.logState() != LogSession.CONNECTING) end();
@@ -63,7 +64,7 @@ public final class LogAccessActivity extends Activity {
         super.onWindowFocusChanged(hasFocus);
         focused = hasFocus;
         // Focus back after the request: Android's confirmation was answered or dismissed; nothing left to wait for.
-        if (requested && hasFocus) handler.postDelayed(this::end, ANSWERED_DELAY);
+        if (requested && hasFocus) { BarService.logAnswered(); handler.postDelayed(this::end, ANSWERED_DELAY); }
         schedule();
     }
 

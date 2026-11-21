@@ -38,7 +38,7 @@ public final class RecoveryHarness {
         check(!BarGesture.releaseShouldTrigger(1000, 350, false, true));
         check(BarGesture.releaseShouldTrigger(200, 200, false, false) && !BarGesture.releaseShouldTrigger(999, 1000, false, false)); // user hold time
         check(VoiceRepair.UNBOUND_MS + TouchArea.MAX_SETTLE + 1000 < LogTrigger.POWER_LAUNCH_AGE); // longest wait still reaches Gemini
-        check(VoiceRepair.SETTLE_MS == 15 && TouchArea.HOLD == 275); // 0.3.5 defaults (user decision)
+        check(VoiceRepair.SETTLE_MS == 15 && TouchArea.HOLD == 195); // defaults (user decisions: wait 0.3.5, hold 0.3.10)
         check(BootRecovery.autoStartMissed(32, 31, 1000, 2000));   // captured last boot only: auto-start blocked
         check(!BootRecovery.autoStartMissed(32, 32, 1000, 2000));  // captured this boot
         check(!BootRecovery.autoStartMissed(32, -2, 3000, 2000));  // installed after this boot: unknown, no warning
@@ -682,7 +682,7 @@ if (-not $bridge -or $bridge.GetAttribute('exported',$namespaces.LookupNamespace
 }
 $securityChecks++
 $permissions = @($manifest.SelectNodes('/manifest/uses-permission',$namespaces) | ForEach-Object { $_.GetAttribute('name',$namespaces.LookupNamespace('android')) } | Sort-Object)
-if (($permissions -join ',') -cne 'android.permission.INTERNET,android.permission.POST_NOTIFICATIONS,android.permission.READ_LOGS,android.permission.RECEIVE_BOOT_COMPLETED,android.permission.REQUEST_INSTALL_PACKAGES,android.permission.WRITE_SECURE_SETTINGS') {
+if (($permissions -join ',') -cne 'android.permission.INTERNET,android.permission.POST_NOTIFICATIONS,android.permission.POST_PROMOTED_NOTIFICATIONS,android.permission.READ_LOGS,android.permission.RECEIVE_BOOT_COMPLETED,android.permission.REQUEST_INSTALL_PACKAGES,android.permission.WRITE_SECURE_SETTINGS') {
     throw ('Unexpected permission set: ' + ($permissions -join ','))
 }
 $securityChecks++
@@ -783,7 +783,8 @@ $joinedSources = $allSources.Values -join "`n"
 if (([regex]::Matches($joinedSources, 'performGlobalAction\(')).Count -ne 1 -or
     ([regex]::Matches($service, [regex]::Escape($allowedLock))).Count -ne 1 -or
     $service -notmatch ('(?s)private void singlePress\(\) \{\s*if \(!PowerButton\.applied\(this\) \|\| !getSystemService\(PowerManager\.class\)\.isInteractive\(\)\) return;\s*if \(' + [regex]::Escape($allowedLock) + '\) return;' + $method + 'PowerButton\.restore\(this\);') -or
-    @($allSources.Keys | Where-Object { $allSources[$_] -match 'Settings\.Global\.put|power_button_' }) -join ',' -cne 'PowerButton.java' -or
+    @($allSources.Keys | Where-Object { $allSources[$_] -match 'power_button_' }) -join ',' -cne 'PowerButton.java' -or
+    (@($allSources.Keys | Where-Object { $allSources[$_] -match 'Settings\.Global\.put' } | Sort-Object) -join ',') -cne 'PowerButton.java,Tweaks.java' -or
     $service -notmatch '(?s)if \(PowerButton\.wanted\(doublePress\(this\), doubleTarget\(this\), instance == this && granted\(this\), BootRecovery\.permitted\(this\),\s*logs\.state\(\) == LogSession\.ACTIVE\)\) \{' + $method + '\} else PowerButton\.restore\(this\);' -or
     $service -notmatch '(?s)logs\.close\(\);\s*PowerButton\.restore\(this\);' -or
     $allSources['BootReceiver.java'] -notmatch '(?s)LOCKED_BOOT_COMPLETED\.equals\(intent\.getAction\(\)\)\) \{' + $method + 'PowerButton\.restore\(context\);' -or
@@ -824,7 +825,12 @@ $securityChecks++
 $alerts = $allSources['Alerts.java']
 $androidNs = $namespaces.LookupNamespace('android')
 $updateJob = $manifest.SelectSingleNode('/manifest/application/service[@android:name=".Alerts$UpdateJob"]',$namespaces)
-if ($alerts -cmatch 'startForeground|setOngoing|FOREGROUND_SERVICE|AlarmManager|WorkManager|putExtra\(' -or
+# The only ongoing notice is the opt-in camera-island (Live Update) form of the log notice, and only while it can be
+# promoted; it is cancelled on reconnect. The update notice is never ongoing.
+if ($alerts -cmatch 'startForeground|FOREGROUND_SERVICE|AlarmManager|WorkManager|putExtra\(' -or
+    ([regex]::Matches($alerts, 'setOngoing\(')).Count -ne 1 -or
+    $alerts -notmatch 'boolean live = island && islandAllowed\(context\);\s*if \(live\) builder\.setStyle\([^;]*\.setOngoing\(live\)' -or
+    $alerts -notmatch 'title, text, wanted\(context, ISLAND\), approve' -or $alerts -notmatch '", false, settings\(app\)\);' -or
     $alerts -notmatch 'getBoolean\(key, false\)' -or
     $alerts -notmatch 'if \(!bar\.getBoolean\(UPDATE, false\) \|\| !StatusPolicy\.updateCheckDue\(now, bar\.getLong\(CHECKED_AT, 0\)\)\) \{ done\.run\(\); return; \}' -or
     $alerts -notmatch 'if \(!wanted\(context, UPDATE\)\) \{ jobs\.cancel\(UPDATE_JOB\); return; \}' -or
@@ -840,6 +846,19 @@ if ($alerts -cmatch 'startForeground|setOngoing|FOREGROUND_SERVICE|AlarmManager|
     @($allSources.Keys | Where-Object { $allSources[$_] -match 'requestPermissions\(' }) -join ',' -cne 'SetupActivity.java' -or
     @($allSources.Keys | Where-Object { $_ -ne 'Alerts.java' -and $allSources[$_] -match 'Alerts\.maybeCheckUpdate\(' }).Count -ne 0) {
     throw 'Alerts: opt-in, permission only from settings, plain notifications, 24 h job only while the update alert is on'
+}
+$securityChecks++
+# Optional tweaks (설정 → 고급 → 편의 기능): every settings key the class names is on this list; secure writes go through
+# setSecure's own three-key allowlist. No System writes or provider calls anywhere, no shell, no package or component changes.
+$tweaks = $allSources['Tweaks.java']
+$tweakKeys = @([regex]::Matches($tweaks, '"([a-z_]+)"') | ForEach-Object { $_.Groups[1].Value } | Where-Object { $_ -match '_' } | Sort-Object -Unique)
+$allowedTweakKeys = @('bluetooth_name','clock_seconds','device_name','device_tether_name','reduce_bright_colors_activated','revise_device_name',
+    'show_rotation_suggestions','tweak_state_')
+if (($tweakKeys -join ',') -cne ($allowedTweakKeys -join ',') -or
+    @($allSources.Keys | Where-Object { $allSources[$_] -match 'Settings\.System\.put|\.call\(' }).Count -ne 0 -or
+    $tweaks -cmatch 'Runtime\.getRuntime|ProcessBuilder|setComponentEnabledSetting|setApplicationEnabledSetting' -or
+    $tweaks -notmatch 'if \(!EXTRA_DIM\.equals\(key\) && !ROTATION_SUGGESTIONS\.equals\(key\) && !CLOCK_SECONDS\.equals\(key\)\) return false;') {
+    throw 'Tweaks: fixed settings key list, no System writes, no shell or package/component changes'
 }
 $securityChecks++
 # The bottom trigger (CTS / chosen app) stays unlocked-only regardless of the locked-screen option.

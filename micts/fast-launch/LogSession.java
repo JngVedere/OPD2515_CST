@@ -124,10 +124,24 @@ final class LogSession {
         listener.stateChanged(false);
     }
 
-    private void activationTimeout(long session) {
+    private void activationTimeout(long session) { decline(session, "activation-timeout"); }
+
+    /** After the confirmation closed, an approval shows within this (device: the first system entry ~5 ms after Allow). */
+    static final long ANSWER_GRACE = 1500;
+
+    /**
+     * The bridge regained focus: Android's confirmation was answered or dismissed. Android does not report a refusal, so a
+     * session still CONNECTING ANSWER_GRACE later was refused; it ends then instead of at the 35 s timeout.
+     */
+    synchronized void answered() {
+        long session = generation;
+        if (state == CONNECTING) handler.postDelayed(() -> decline(session, "not-approved"), ANSWER_GRACE);
+    }
+
+    private void decline(long session, String reason) {
         synchronized (this) { if (!current(session) || state != CONNECTING) return; }
         // No system-UID entry: Android's confirmation was declined, dismissed or never shown.
-        if (drop(session)) { Log.i(TAG, "state OFF reason=activation-timeout session=" + session); listener.stateChanged(true); }
+        if (drop(session)) { Log.i(TAG, "state OFF reason=" + reason + " session=" + session); listener.stateChanged(true); }
     }
 
     private synchronized boolean drop(long session) {

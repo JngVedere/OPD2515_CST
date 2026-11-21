@@ -9,7 +9,8 @@ import android.os.Looper;
 
 /**
  * App drawer icon (through the exported DrawerLaunch alias). What a tap opens is the user's choice in settings
- * (ACTION): Circle to Search (default), Gemini Assistant or this app's settings screen. Only that saved choice is read,
+ * (ACTION): the settings screen (default, user decision 0.3.10), Circle to Search or Gemini Assistant. A choice the user
+ * saved earlier (e.g. Circle to Search) is kept; only an unset value follows the default. Only that saved choice is read,
  * never the intent (any app can start a launcher entry).
  * No window at all (Theme.NoDisplay) and it finishes at once, so the launcher's app-open animation has nothing to expand
  * into and reverts (the icon bounces back). Circle to Search is requested only after that bounce has settled. Requested
@@ -26,9 +27,9 @@ public final class DrawerActivity extends Activity {
     static final String ACTION = "drawer_action";
     static final int CTS = 0, ASSISTANT = 1, SETTINGS = 2;
 
-    /** Saved choice, clamped: an unknown stored value opens Circle to Search. */
+    /** Saved choice (unset: the settings screen), clamped: an unknown stored value opens Circle to Search. */
     static int action(Context context) {
-        int value = context.getSharedPreferences("bar", MODE_PRIVATE).getInt(ACTION, CTS);
+        int value = context.getSharedPreferences("bar", MODE_PRIVATE).getInt(ACTION, SETTINGS);
         return value == ASSISTANT || value == SETTINGS ? value : CTS;
     }
 

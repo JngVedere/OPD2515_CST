@@ -12,6 +12,7 @@ import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.os.Build;
 import android.util.Log;
 
 /**
@@ -23,8 +24,16 @@ import android.util.Log;
  */
 final class Alerts {
     static final String LOG = "alert_log", UPDATE = "alert_update";
+    /**
+     * Opt-in: the device-log notice also as an Android 16 Live Update, which ColorOS shows in the capsule by the camera.
+     * Device (ColorOS 17): promotion also needs the per-app "라이브 알림에 라이브 업데이트 표시" switch, off by default
+     * (canPostPromotedNotifications false until the user turns it on). Android promotes only ongoing notices, so the
+     * notice is ongoing only while it can actually be promoted; it is cancelled as soon as the log reconnects.
+     */
+    static final String ISLAND = "alert_island";
     private static final String CHECKED_AT = "update_checked_at", NOTIFIED_CODE = "update_notified_code";
-    static final int LOG_MISSING = 2, NEW_VERSION = 3;
+    static final int LOG_MISSING = 2, NEW_VERSION = 3, TEST = 4;
+    private static final long TEST_MS = 10_000;
     /** Set when an update notification went out; the settings screen shows its update banner once on the next open. */
     private static final String PENDING = "update_pending";
 
@@ -41,7 +50,7 @@ final class Alerts {
      */
     static void logMissing(Context context, boolean approve, String title, String text) {
         if (!wanted(context, LOG)) return;
-        post(context, LOG_MISSING, "log", "기기 로그 권한", title, text, approve
+        post(context, LOG_MISSING, "log", "기기 로그 권한", title, text, wanted(context, ISLAND), approve
             ? new Intent(context, LogAccessActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_NO_ANIMATION)
             : settings(context));
     }
@@ -103,7 +112,7 @@ final class Alerts {
                     prefs(app).edit().putLong(NOTIFIED_CODE, release.code).putBoolean(PENDING, true).apply();
                     post(app, NEW_VERSION, "update", "업데이트",
                         (release.beta ? "새 베타 업데이트 · " : "새로운 업데이트 · ") + release.version,
-                        "눌러서 설정 화면에서 설치할 수 있습니다.", settings(app));
+                        "눌러서 설정 화면에서 설치할 수 있습니다.", false, settings(app));
                 } catch (Exception failed) {
                     Log.i("PadAlerts", "update check failed: " + failed.getClass().getSimpleName());
                 } finally { done.run(); }
@@ -119,14 +128,39 @@ final class Alerts {
     }
 
     /** open: an explicit intent to one of this app's own activities, without extras. */
-    private static void post(Context context, int id, String channel, String channelName, String title, String text, Intent open) {
+    /** Whether a Live Update from this app can reach the capsule now (Android 16+, per-app switch on). */
+    static boolean islandAllowed(Context context) {
+        NotificationManager manager = context.getSystemService(NotificationManager.class);
+        return Build.VERSION.SDK_INT >= 36 && manager != null && manager.canPostPromotedNotifications();
+    }
+
+    private static void post(Context context, int id, String channel, String channelName, String title, String text,
+            boolean island, Intent open) {
+        post(context, id, channel, channelName, title, text, island, open, "로그 승인", 0);
+    }
+
+    /** Settings button demo: the log notice's capsule form with test text; it removes itself after TEST_MS. */
+    static void test(Context context) {
+        post(context, TEST, "log", "기기 로그 권한", "카메라 섬 테스트 알림", "Circle-to-Search Trigger의 알림이 여기에 뜹니다. 10초 뒤 사라집니다.",
+            true, settings(context), "테스트", TEST_MS);
+    }
+
+    /** chip: the capsule's short text. timeout > 0: the system removes the notice after that many ms. */
+    private static void post(Context context, int id, String channel, String channelName, String title, String text,
+            boolean island, Intent open, String chip, long timeout) {
         NotificationManager manager = context.getSystemService(NotificationManager.class);
         if (manager == null || !manager.areNotificationsEnabled()) return;
         manager.createNotificationChannel(new NotificationChannel(channel, channelName, NotificationManager.IMPORTANCE_DEFAULT));
         PendingIntent tap = PendingIntent.getActivity(context, id, open, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
         int icon = context.getResources().getIdentifier("ic_tile_assistant", "drawable", context.getPackageName()); // no R class in this build
-        manager.notify(id, new Notification.Builder(context, channel)
+        Notification.Builder builder = new Notification.Builder(context, channel)
             .setSmallIcon(icon != 0 ? icon : android.R.drawable.stat_notify_error).setContentTitle(title).setContentText(text)
-            .setContentIntent(tap).setAutoCancel(true).build());
+            .setContentIntent(tap).setAutoCancel(true);
+        // Live Update (device-verified recipe): big text, ongoing, promotion request; the capsule shows the short text.
+        boolean live = island && islandAllowed(context);
+        if (live) builder.setStyle(new Notification.BigTextStyle().bigText(text)).setOngoing(live).setOnlyAlertOnce(true)
+            .setRequestPromotedOngoing(true).setShortCriticalText(chip);
+        if (timeout > 0) builder.setTimeoutAfter(timeout);
+        manager.notify(id, builder.build());
     }
 }

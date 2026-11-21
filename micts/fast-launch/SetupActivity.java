@@ -29,6 +29,10 @@ public final class SetupActivity extends Activity {
     /** Theme primary text colour with its disabled state, so a disabled slider label looks disabled. */
     private android.content.res.ColorStateList primary;
     private LinearLayout body, warnings, updateBanner, statusCard;
+    private LinearLayout homePage, settingsPage, navBar;
+    private ScrollView pageScroll;
+    private TextView homeTab, settingsTab;
+    private static final String TAB_SETTINGS = "tab_settings";
     private Switch autoUpdateSwitch;
     /** Where text/toggle/button add views: body, or the current settings card opened by section(). */
     private LinearLayout section;
@@ -92,20 +96,36 @@ public final class SetupActivity extends Activity {
         section = body;
         int pad = dp(24);
         body.setPadding(pad, pad, pad, dp(64));
-        ScrollView scroll = new ScrollView(this);
-        scroll.setOnApplyWindowInsetsListener((view, insets) -> {
+        // Two pages (user request): 홈 = status and launch options, 설정 = 업데이트, 알림, 고급; a bottom bar switches them.
+        homePage = body;
+        settingsPage = new LinearLayout(this);
+        settingsPage.setOrientation(LinearLayout.VERTICAL);
+        settingsPage.setPadding(pad, pad, pad, dp(64));
+        LinearLayout pages = new LinearLayout(this);
+        pages.setOrientation(LinearLayout.VERTICAL);
+        pages.addView(homePage);
+        pages.addView(settingsPage);
+        pageScroll = new ScrollView(this);
+        pageScroll.addView(pages);
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.addView(pageScroll, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+        navBar = new LinearLayout(this);
+        root.addView(navBar, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        root.setOnApplyWindowInsetsListener((view, insets) -> {
             android.graphics.Insets bars = insets.getInsets(android.view.WindowInsets.Type.systemBars()
                 | android.view.WindowInsets.Type.displayCutout());
-            view.setPadding(bars.left, bars.top, bars.right, bars.bottom);
+            view.setPadding(bars.left, bars.top, bars.right, 0);
+            navBar.setPadding(0, 0, 0, bars.bottom);
             return insets;
         });
-        scroll.addView(body);
-        setContentView(scroll);
+        setContentView(root);
         android.content.res.TypedArray colors = obtainStyledAttributes(new int[]{android.R.attr.textColorSecondary, android.R.attr.textColorPrimaryDisableOnly, android.R.attr.colorAccent});
         secondary = colors.getColor(0, 0xFF808080);
         primary = colors.getColorStateList(1);
         accent = colors.getColor(2, 0xFF4A5A8E);
         colors.recycle();
+        buildNavBar(state != null && state.getBoolean(TAB_SETTINGS, false));
         // Title row: app name on the left, the Detail / Compact switch for the card descriptions at the right end.
         TextView title = text("Circle-to-Search Trigger", 24);
         title.setTypeface(null, android.graphics.Typeface.BOLD);
@@ -191,6 +211,25 @@ public final class SetupActivity extends Activity {
         });
         text("하단 영역 인식은 투명한 터치 영역을 씁니다. ColorOS 기본 하단 바는 시스템 애니메이션을 그대로 쓰고, 기기 로그로 길게 누르기를 감지합니다. 3버튼 탐색에서는 홈 버튼을 길게 누르면 됩니다.\n"
             + "3버튼 탐색에서 하단 영역 인식을 쓰면 홈 화면의 최근 앱 버튼을 영역이 가릴 수 있으니, 터치 영역에서 위치를 옮겨주세요.\n앱을 삭제하기 전에는 '끄기'를 먼저 눌러 원래 제스처 설정을 복구해주세요.", 14);
+        // 연결 앱 lives under 실행 방식 (user request): what the bottom opens belongs with how it is triggered.
+        divider(section);
+        TextView targetTitle = text("연결 앱", 16);
+        targetTitle.setTypeface(null, android.graphics.Typeface.BOLD);
+        targetLabel = text("", 18);
+        button("앱 선택", this::chooseApp);
+        text("기본값은 서클 투 서치 빠른 실행입니다. 다른 앱을 고르면 그 앱이 바로 열립니다.", 14);
+        divider(section);
+        text("서클 투 서치를 쓰려면 Google 앱을 기본 디지털 어시스턴트로 선택해주세요. MiCTS는 필요 없으며, 설치되어 있으면 직접 실행이 실패했을 때만 예비로 씁니다.", 14);
+        button("기본 어시스턴트 설정", () -> {
+            try {
+                startActivity(new Intent(Settings.ACTION_VOICE_INPUT_SETTINGS));
+                Toast.makeText(this, "디지털 어시스턴트 앱을 Google로 선택해주세요.", Toast.LENGTH_LONG).show();
+            }
+            catch (ActivityNotFoundException unavailable) {
+                Toast.makeText(this, "설정 → 앱 → 기본 앱에서 디지털 어시스턴트를 Google로 선택해주세요.", Toast.LENGTH_LONG).show();
+                startActivity(freshSettings(Settings.ACTION_SETTINGS));
+            }
+        });
 
         section("전원 버튼");
         powerSwitch = toggle("전원 버튼 길게 눌러 Gemini Assistant 열기", BarService.power(this), (view, checked) -> {
@@ -221,10 +260,6 @@ public final class SetupActivity extends Activity {
         button("Google 음성 연결 다시 시작", this::repairVoice);
         text("Gemini Assistant가 뜨지 않을 때 눌러주세요. 이미 선택된 Google 음성 서비스를 약 0.35초 해제했다가 같은 값으로 되돌려 다시 연결하며, 다른 어시스턴트로 바꾸지 않습니다.\n보안 설정 쓰기 권한이 있으면 전원 버튼을 누를 때마다 자동으로도 실행됩니다.", 14);
 
-        section("기기 로그");
-        button("기기 로그 접근 승인 요청", () -> { BarService.requestApproval(this); status.postDelayed(this::refresh, 500); });
-        text("ColorOS 기본 하단 바와 전원 버튼이 함께 쓰는 연결입니다. 재부팅 후 첫 잠금 해제 때 Android 확인 창이 자동으로 뜹니다.\n창이 가려졌거나 거부했다면 이 버튼으로 다시 요청하세요. 앱이 승인을 대신 누르지는 않습니다.", 14);
-
         section("터치 영역");
         areaSwitch = toggle("인식 영역 표시", preferences.getBoolean("show_area", false), (view, checked) -> {
             preferences.edit().putBoolean("show_area", checked).apply();
@@ -234,7 +269,31 @@ public final class SetupActivity extends Activity {
         divider(section);
         boolean landscape = landscape();
         int[] screen = screenDp();
-        text("위치와 크기", 16).setTypeface(null, android.graphics.Typeface.BOLD);
+        // Collapsed on every open (user request), like 고급; the title row toggles it. Sliders are built into the box.
+        TextView areaTitle = text("터치 영역 설정", 16);
+        areaTitle.setTypeface(null, android.graphics.Typeface.BOLD);
+        section.removeView(areaTitle);
+        LinearLayout areaRow = new LinearLayout(this);
+        areaRow.setGravity(android.view.Gravity.CENTER_VERTICAL);
+        areaRow.setMinimumHeight(dp(48));
+        areaRow.addView(areaTitle, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        TextView areaToggle = phrase(new TextView(this));
+        areaToggle.setTextSize(14); areaToggle.setTextColor(secondary);
+        areaToggle.setPadding(dp(12), 0, 0, 0);
+        areaRow.addView(areaToggle);
+        section.addView(areaRow, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        LinearLayout areaBox = new LinearLayout(this);
+        areaBox.setOrientation(LinearLayout.VERTICAL);
+        section.addView(areaBox, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        Runnable showArea = () -> areaToggle.setText(areaBox.getVisibility() == android.view.View.VISIBLE ? "접기 ▴" : "펼치기 ▾");
+        areaBox.setVisibility(android.view.View.GONE);
+        showArea.run();
+        areaRow.setOnClickListener(v -> {
+            areaBox.setVisibility(areaBox.getVisibility() == android.view.View.VISIBLE ? android.view.View.GONE : android.view.View.VISIBLE);
+            showArea.run();
+        });
+        LinearLayout areaSection = section;
+        section = areaBox;
         // Which value set the sliders edit; the activity is recreated on rotation, so this always matches.
         facing = text((landscape ? "가로" : "세로") + " 화면 값을 조절하는 중", 16);
         facing.setTypeface(null, android.graphics.Typeface.BOLD);
@@ -270,6 +329,7 @@ public final class SetupActivity extends Activity {
             showTuning();
             Toast.makeText(this, "가로·세로 화면의 위치·크기와 인식 시간을 기본값으로 되돌렸습니다.", Toast.LENGTH_SHORT).show();
         });
+        section = areaSection;
 
         section("최근 앱");
         recentSwitch = toggle("최근 앱에 표시", preferences.getBoolean("show_recent", false), (view, checked) -> {
@@ -277,20 +337,6 @@ public final class SetupActivity extends Activity {
             applyRecentVisibility();
         });
         text("이 설정 화면을 최근 앱 목록에 표시합니다. 앱 서랍 아이콘은 '바로 실행'에서 따로 켭니다.\n최근 앱에서 이 앱 카드를 잠가 두면 '모두 닫기' 때 앱이 종료되지 않습니다. 잠근 뒤에는 표시를 꺼도 잠금이 유지됩니다.", 14);
-
-        section("연결 앱");
-        targetLabel = text("", 18);
-        button("앱 선택", this::chooseApp);
-        text("기본값은 서클 투 서치 빠른 실행입니다. 다른 앱을 고르면 그 앱이 바로 열립니다.", 14);
-        divider(section);
-        text("서클 투 서치를 쓰려면 Google 앱을 기본 디지털 어시스턴트로 선택해주세요. MiCTS는 필요 없으며, 설치되어 있으면 직접 실행이 실패했을 때만 예비로 씁니다.", 14);
-        button("기본 어시스턴트 설정", () -> {
-            try { startActivity(new Intent(Settings.ACTION_VOICE_INPUT_SETTINGS)); }
-            catch (ActivityNotFoundException unavailable) {
-                Toast.makeText(this, "설정 → 앱 → 기본 앱에서 디지털 어시스턴트를 Google로 선택해주세요.", Toast.LENGTH_LONG).show();
-                startActivity(freshSettings(Settings.ACTION_SETTINGS));
-            }
-        });
 
         section("바로 실행");
         ComponentName drawer = new ComponentName(this, MainActivity.DRAWER);
@@ -342,6 +388,7 @@ public final class SetupActivity extends Activity {
         button("최근 앱 정리 제외 설정", this::recentLockPrompt);
         button("설정 닫기", () -> { applyRecentVisibility(); moveTaskToBack(true); });
 
+        body = settingsPage; // 업데이트, 알림, 고급 and the footer live on the 설정 page.
         section("업데이트");
         autoUpdateSwitch = toggle("설정을 열 때 업데이트 자동 확인", preferences.getBoolean(UPDATE_AUTO, true),
             (view, checked) -> preferences.edit().putBoolean(UPDATE_AUTO, checked).apply());
@@ -354,12 +401,18 @@ public final class SetupActivity extends Activity {
         button("업데이트 확인", this::checkUpdate);
         text("GitHub에서 새 버전 정보만 받아오며, 기기 정보는 보내지 않습니다. 새 버전은 파일 검증 후 Android 설치 화면으로 설치합니다.\n처음 한 번은 '출처를 알 수 없는 앱 설치' 허용이 필요하고, 업데이트 후에는 기기 로그 승인을 다시 해야 합니다.", 14);
         section("알림");
+        // Small "테스트" button beside the switch instead of a full-width button (user request).
+        islandAlert = toggle("카메라 섬에도 표시", Alerts.wanted(this, Alerts.ISLAND),
+            (view, checked) -> alertChanged(Alerts.ISLAND, checked), "테스트", this::testIsland);
+        text("기기 로그 알림을 카메라 옆 캡슐(라이브 알림)에도 띄웁니다. 켜면 이 앱의 알림 설정에서 '라이브 알림에 라이브 업데이트 표시'도 켜야 하고, '기기 로그 권한이 없을 때 알림 받기'가 켜져 있어야 합니다. 캡슐에 뜨는 동안 알림은 기기 로그가 다시 연결될 때까지 밀어서 지울 수 없습니다.\n'테스트'를 누르면 10초간 테스트 알림을 보냅니다. 이 앱이 앞에 있으면 섬이 보이지 않아, 이 화면은 홈 화면 위 부동창으로 바뀝니다. 창을 누르면 다시 조작할 수 있습니다.", 14);
+        divider(section);
         logAlert = toggle("기기 로그 권한이 없을 때 알림 받기", Alerts.wanted(this, Alerts.LOG),
-            (view, checked) -> alertChanged(Alerts.LOG, checked));
-        text("ColorOS 기본 바나 전원 버튼처럼 기기 로그가 필요한 옵션이 켜져 있는데 기기 로그 권한이 없거나, 1분이 지나도 승인되지 않았거나, 승인이 거부되거나, 연결이 끊기면 알려줍니다. 알림을 누르면 바로 기기 로그 확인 창이 뜹니다 (ADB 권한이 없을 때는 설정 화면).", 14);
+            (view, checked) -> alertChanged(Alerts.LOG, checked), "알림이 뜨기까지 최대 60초가 걸릴 수 있습니다.");
+        text("ColorOS 기본 바나 전원 버튼처럼 기기 로그가 필요한 옵션이 켜져 있는데 기기 로그 권한이 없거나, 승인되지 않았거나, 승인이 거부되거나, 연결이 끊기면 알려줍니다. 알림을 누르면 바로 기기 로그 확인 창이 뜹니다 (ADB 권한이 없을 때는 설정 화면).", 14);
         divider(section);
         updateAlert = toggle("새로운 업데이트가 있을 때 알림 받기", Alerts.wanted(this, Alerts.UPDATE),
-            (view, checked) -> alertChanged(Alerts.UPDATE, checked));
+            (view, checked) -> alertChanged(Alerts.UPDATE, checked),
+            "새 버전은 24시간에 한 번 확인하므로, 알림이 뜨기까지 최대 24시간이 걸릴 수 있습니다.");
         text("24시간에 한 번만 GitHub에서 새 버전을 확인합니다. 그때 인터넷이 끊겨 있으면 다음 확인은 24시간 뒤입니다. 같은 버전은 한 번만 알려주며, '베타 버전도 확인' 설정을 따릅니다.", 14);
         section("고급");
         // Experimental: changes system power-key settings. Red outline so the risk is visible before reading anything.
@@ -373,7 +426,14 @@ public final class SetupActivity extends Activity {
         experimental.setPadding(dp(14), 0, dp(14), dp(8));
         LinearLayout.LayoutParams experimentalParams = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         experimentalParams.topMargin = dp(4); experimentalParams.bottomMargin = dp(8);
-        section.addView(experimental, experimentalParams);
+        LinearLayout advancedCard = section;
+        LinearLayout advancedContent = new LinearLayout(this);
+        advancedContent.setOrientation(LinearLayout.VERTICAL);
+        advancedCard.addView(advancedContent, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        section = advancedContent;
+        buildTweaks();
+        advancedContent.addView(experimental, experimentalParams);
+        section = advancedCard;
         // Collapsed on every open; the status card still shows whether the double press is on.
         // Title row: section title as is on the left, the expand/collapse label at the right end; the whole row toggles.
         TextView advancedTitle = (TextView) section.getChildAt(0);
@@ -388,11 +448,11 @@ public final class SetupActivity extends Activity {
         advancedRow.addView(advancedToggle);
         section.addView(advancedRow, 0, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         Runnable showAdvanced = () -> advancedToggle.setText(
-            experimental.getVisibility() == android.view.View.VISIBLE ? "접기 ▴" : "펼치기 ▾");
-        experimental.setVisibility(android.view.View.GONE);
+            advancedContent.getVisibility() == android.view.View.VISIBLE ? "접기 ▴" : "펼치기 ▾");
+        advancedContent.setVisibility(android.view.View.GONE);
         showAdvanced.run();
         advancedRow.setOnClickListener(v -> {
-            experimental.setVisibility(experimental.getVisibility() == android.view.View.VISIBLE ? android.view.View.GONE : android.view.View.VISIBLE);
+            advancedContent.setVisibility(advancedContent.getVisibility() == android.view.View.VISIBLE ? android.view.View.GONE : android.view.View.VISIBLE);
             showAdvanced.run();
         });
         section = experimental;
@@ -439,7 +499,7 @@ public final class SetupActivity extends Activity {
     static final String UPDATE_BETA = "update_beta";
     private static final String UPDATE_AUTO = "update_auto";
 
-    private Switch logAlert, updateAlert;
+    private Switch logAlert, updateAlert, islandAlert;
     private static final int NOTIFY_REQUEST = 41;
 
     /** Turning either alert on asks for the notification permission when it is missing (Android 13+). */
@@ -448,9 +508,80 @@ public final class SetupActivity extends Activity {
         preferences.edit().putBoolean(key, checked).apply();
         Alerts.scheduleUpdateCheck(this);
         if (!checked) return;
+        // The capsule also needs this app's Live Updates switch (ColorOS: off by default); open it when it is off.
+        if (Alerts.ISLAND.equals(key) && Build.VERSION.SDK_INT >= 36 && !Alerts.islandAllowed(this)) { openPromotionSettings(); return; }
         if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED)
             requestPermissions(new String[]{android.Manifest.permission.POST_NOTIFICATIONS}, NOTIFY_REQUEST);
         else if (!getSystemService(android.app.NotificationManager.class).areNotificationsEnabled()) openNotificationSettings();
+    }
+
+    /** This app's Live Updates switch ("라이브 알림에 라이브 업데이트 표시", ColorOS: off by default). */
+    private void openPromotionSettings() {
+        Toast.makeText(this, "'라이브 알림에 라이브 업데이트 표시'를 켜주세요.", Toast.LENGTH_LONG).show();
+        try { startActivity(new Intent(Settings.ACTION_APP_NOTIFICATION_PROMOTION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, getPackageName())); }
+        catch (ActivityNotFoundException missing) { openNotificationSettings(); }
+    }
+
+    /** Demo: a short-lived test notice in the camera island; sends the user to whatever is still missing first. */
+    private void testIsland() {
+        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(new String[]{android.Manifest.permission.POST_NOTIFICATIONS}, NOTIFY_REQUEST);
+            return;
+        }
+        if (!getSystemService(android.app.NotificationManager.class).areNotificationsEnabled()) { openNotificationSettings(); return; }
+        if (!Alerts.islandAllowed(this)) {
+            if (Build.VERSION.SDK_INT >= 36) openPromotionSettings();
+            else Toast.makeText(this, "이 기기에서는 카메라 섬 알림을 쓸 수 없습니다.", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        islandDemoPending = true;
+        if (isInMultiWindowMode()) { islandDemo(); return; }
+        // Full screen: reopen this screen as a ColorOS floating window (windowing mode 100, as `am start --windowingMode
+        // 100` uses); islandDemo() then runs when it resumes.
+        Context app = getApplicationContext();
+        finishAndRemoveTask();
+        new Handler(Looper.getMainLooper()).postDelayed(() -> {
+            android.app.ActivityOptions options = android.app.ActivityOptions.makeBasic();
+            try { org.lsposed.hiddenapibypass.HiddenApiBypass.invoke(android.app.ActivityOptions.class, options, "setLaunchWindowingMode", 100); }
+            catch (Throwable unavailable) { android.util.Log.w("PadIsland", "floating launch unavailable: " + unavailable.getClass().getSimpleName()); }
+            // Device: ColorOS ignores launch bounds here; its floating window always opens at its own default size.
+            try { app.startActivity(new Intent(app, SetupActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK), options.toBundle()); }
+            catch (RuntimeException blocked) { android.util.Log.w("PadIsland", "reopen blocked: " + blocked.getClass().getSimpleName()); }
+        }, ISLAND_REOPEN_DELAY);
+    }
+
+    private static final long ISLAND_REOPEN_DELAY = 300, ISLAND_POST_DELAY = 600, ISLAND_DEMO_MS = 10_000;
+
+    /** In-process only (never an intent extra): the next resume of this screen runs the camera-island demo. */
+    private static boolean islandDemoPending;
+
+    /**
+     * Device (ColorOS 17): the capsule of the app whose task has focus is hidden, floating window or not; a visible window
+     * without focus does not hide it. So the floating screen stops taking focus, the home screen behind it is brought to
+     * front (task focus moves there; the floating window stays), and only then the test notice is posted, so the capsule
+     * is laid out with the launcher in front. Touching this window, or 10 s, ends the demo.
+     */
+    private void islandDemo() {
+        if (!islandDemoPending) return;
+        islandDemoPending = false;
+        Context app = getApplicationContext();
+        if (isInMultiWindowMode()) getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE);
+        try { startActivity(new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); }
+        catch (ActivityNotFoundException missing) { moveTaskToBack(true); }
+        status.postDelayed(() -> {
+            Alerts.test(app);
+            Toast.makeText(app, "화면 위쪽 카메라 섬을 확인하세요. 10초 뒤 사라집니다.", Toast.LENGTH_SHORT).show();
+        }, ISLAND_POST_DELAY);
+        status.postDelayed(this::endIslandDemo, ISLAND_POST_DELAY + ISLAND_DEMO_MS);
+    }
+
+    private void endIslandDemo() {
+        getWindow().clearFlags(android.view.WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE);
+    }
+
+    @Override public boolean dispatchTouchEvent(android.view.MotionEvent event) {
+        if ((getWindow().getAttributes().flags & android.view.WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE) != 0) endIslandDemo();
+        return super.dispatchTouchEvent(event);
     }
 
     private void openNotificationSettings() {
@@ -463,10 +594,11 @@ public final class SetupActivity extends Activity {
         super.onRequestPermissionsResult(request, permissions, results);
         if (request != NOTIFY_REQUEST || (results.length > 0 && results[0] == PackageManager.PERMISSION_GRANTED)) return;
         // Denied: the alerts cannot be shown, so both switch back off. Once Android stops asking, send the user to settings.
-        preferences.edit().putBoolean(Alerts.LOG, false).putBoolean(Alerts.UPDATE, false).apply();
+        preferences.edit().putBoolean(Alerts.LOG, false).putBoolean(Alerts.UPDATE, false).putBoolean(Alerts.ISLAND, false).apply();
         Alerts.scheduleUpdateCheck(this);
         setSynced(logAlert, false);
         setSynced(updateAlert, false);
+        setSynced(islandAlert, false);
         if (!shouldShowRequestPermissionRationale(android.Manifest.permission.POST_NOTIFICATIONS)) openNotificationSettings();
         else Toast.makeText(this, "알림 권한이 없어 알림을 켜지 않았습니다.", Toast.LENGTH_SHORT).show();
     }
@@ -696,6 +828,249 @@ public final class SetupActivity extends Activity {
         return card;
     }
 
+    // --- Bottom navigation ------------------------------------------------------------------------------------------
+
+    private void buildNavBar(boolean settings) {
+        navBar.setOrientation(LinearLayout.HORIZONTAL);
+        navBar.setBackgroundColor(0x0F808080);
+        homeTab = navItem("홈", "ic_nav_home", false);
+        settingsTab = navItem("설정", "ic_nav_settings", true);
+        showPage(settings);
+    }
+
+    private TextView navItem(String label, String icon, boolean settings) {
+        TextView item = phrase(new TextView(this));
+        item.setText(label); item.setTextSize(13);
+        item.setGravity(android.view.Gravity.CENTER);
+        item.setPadding(0, dp(8), 0, dp(8));
+        int id = getResources().getIdentifier(icon, "drawable", getPackageName()); // no R class in this build
+        if (id != 0) {
+            android.graphics.drawable.Drawable drawable = getDrawable(id).mutate();
+            drawable.setBounds(0, 0, dp(26), dp(26));
+            item.setCompoundDrawables(null, drawable, null, null);
+            item.setCompoundDrawablePadding(dp(3));
+        }
+        item.setOnClickListener(v -> showPage(settings));
+        navBar.addView(item, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        return item;
+    }
+
+    private boolean onSettingsPage;
+
+    private void showPage(boolean settings) {
+        if (homeTab == null) return;
+        if (settings != onSettingsPage) pageScroll.scrollTo(0, 0);
+        onSettingsPage = settings;
+        homePage.setVisibility(settings ? android.view.View.GONE : android.view.View.VISIBLE);
+        settingsPage.setVisibility(settings ? android.view.View.VISIBLE : android.view.View.GONE);
+        for (TextView tab : new TextView[]{homeTab, settingsTab}) {
+            boolean selected = (tab == settingsTab) == settings;
+            int color = selected ? accent : secondary;
+            tab.setTextColor(color);
+            tab.setTypeface(null, selected ? android.graphics.Typeface.BOLD : android.graphics.Typeface.NORMAL);
+            for (android.graphics.drawable.Drawable icon : tab.getCompoundDrawables())
+                if (icon != null) icon.setTint(color);
+        }
+    }
+
+    @Override protected void onSaveInstanceState(Bundle out) {
+        super.onSaveInstanceState(out);
+        out.putBoolean(TAB_SETTINGS, onSettingsPage);
+    }
+
+    // --- 고급 → 편의 기능 (Tweaks) -------------------------------------------------------------------------------------
+
+    private void buildTweaks() {
+        TextView title = text("편의 기능", 18);
+        title.setTypeface(null, android.graphics.Typeface.BOLD);
+        title.setPadding(0, dp(8), 0, dp(2));
+        text("시스템 설정 일부를 바로 바꾸거나 숨겨진 설정 화면을 엽니다. 켠 기능은 끄면 원래대로 돌아갑니다. 보안 설정 쓰기 권한(최초 ADB 설정)이 필요합니다.", 14);
+        divider(section);
+        toggle("화면 더 어둡게", Tweaks.secureOn(this, Tweaks.EXTRA_DIM, false),
+            (view, checked) -> tweakSecure(view, Tweaks.EXTRA_DIM, checked, checked), "자세히 보기",
+            () -> openPage("com.android.settings.Settings$ReduceBrightColorsSettingsActivity"));
+        toggle("자동 회전 제안 끄기", !Tweaks.secureOn(this, Tweaks.ROTATION_SUGGESTIONS, true),
+            (view, checked) -> tweakSecure(view, Tweaks.ROTATION_SUGGESTIONS, !checked, checked));
+        text("화면을 돌렸을 때 모서리에 뜨는 회전 버튼을 숨깁니다.", 14);
+        toggle("시계에 초 표시", Tweaks.secureOn(this, Tweaks.CLOCK_SECONDS, false),
+            (view, checked) -> tweakSecure(view, Tweaks.CLOCK_SECONDS, checked, checked));
+        divider(section);
+        actionRow("기기 이름 변경", false, "네트워크 연결 없이 기기 이름을 변경합니다.\n검열을 우회하여 기기 이름 설정이 가능합니다.", this::renameDevice);
+        text("온라인 인증 없이 기기 이름을 바꿉니다. 블루투스와 핫스팟 이름도 함께 바뀝니다.", 14);
+        actionRow("플래시 알림", () -> openPage("com.android.settings.Settings$FlashNotificationsActivity"));
+        actionRow("앱 배터리 사용량", () -> openPage("com.android.settings.Settings$AppBatteryUsageActivity"));
+        actionRow("개발자 옵션", () -> {
+            if (!Tweaks.start(this, new Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS)))
+                Toast.makeText(this, "개발자 옵션을 열 수 없습니다. 먼저 개발자 옵션을 켜주세요.", Toast.LENGTH_LONG).show();
+        });
+        actionRow("시스템 UI 튜너", true, this::openTuner);
+        actionRow("앱 설치 프로그램 광고 제거", true, this::installerAds);
+        actionRow("전역 고주사율", true, () -> adbDialog("전역 고주사율",
+            "일부 하위 화면이 60·90Hz로 묶이는 문제를 풉니다. 주사율 값은 시스템 전용 설정이라 앱 권한으로는 바꿀 수 없어, 컴퓨터에서 아래 명령을 실행해야 합니다.\n\n"
+                + "되돌리기: 설정 → 디스플레이에서 화면 주사율을 다시 고르거나, 아래 명령을 실행하세요.\n"
+                + Tweaks.highRefreshOff(this) + "\n\n켜기:",
+            Tweaks.HIGH_REFRESH_ON));
+        text("시스템 UI 튜너, 설치 프로그램 광고 제거, 전역 고주사율은 앱 권한으로 바꿀 수 없어, 필요한 ADB 명령을 안내합니다.", 14);
+    }
+
+    private void actionRow(String label, Runnable action) { actionRow(label, false, action); }
+
+    private void actionRow(String label, boolean adb, Runnable action) { actionRow(label, adb, null, action); }
+
+    /**
+     * A tappable row: label on the left, a chevron on the right; adb marks a row that needs a computer (ADB), info adds
+     * a small (i) beside the label that shows the text.
+     */
+    private void actionRow(String label, boolean adb, String info, Runnable action) {
+        TextView row = phrase(new TextView(this));
+        row.setText(label); row.setTextSize(18);
+        row.setTextColor(primary); // same as the switch labels
+        row.setMinHeight(dp(56));
+        row.setGravity(android.view.Gravity.CENTER_VERTICAL);
+        TextView chevron = phrase(new TextView(this));
+        chevron.setText("›"); chevron.setTextSize(22); chevron.setTextColor(secondary);
+        LinearLayout line = new LinearLayout(this);
+        line.setGravity(android.view.Gravity.CENTER_VERTICAL);
+        if (info == null) line.addView(row, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        else {
+            line.addView(row, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+            line.addView(infoMark(label, info));
+            line.addView(new android.view.View(this), new LinearLayout.LayoutParams(0, 1, 1f));
+        }
+        if (adb) {
+            TextView badge = phrase(new TextView(this));
+            badge.setText("ADB 필요"); badge.setTextSize(12); badge.setTextColor(accent);
+            badge.setPadding(dp(8), dp(2), dp(8), dp(2));
+            android.graphics.drawable.GradientDrawable pill = new android.graphics.drawable.GradientDrawable();
+            pill.setCornerRadius(dp(10)); pill.setStroke(Math.max(1, dp(1)), accent);
+            badge.setBackground(pill);
+            LinearLayout.LayoutParams gap = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            gap.rightMargin = dp(10);
+            gap.topMargin = dp(2); // optical alignment with the chevron, which sits low in its glyph box
+            line.addView(badge, gap);
+        }
+        line.addView(chevron);
+        line.setOnClickListener(v -> action.run());
+        section.addView(line, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+    }
+
+    /** A small (i) beside a label; tapping it (or hovering a stylus) shows the info as a bubble. 40dp touch target. */
+    private android.view.View infoMark(String label, String info) {
+        TextView mark = phrase(new TextView(this));
+        mark.setText("i"); mark.setTextSize(12); mark.setTextColor(secondary);
+        mark.setTypeface(null, android.graphics.Typeface.BOLD);
+        mark.setGravity(android.view.Gravity.CENTER);
+        android.graphics.drawable.GradientDrawable ring = new android.graphics.drawable.GradientDrawable();
+        ring.setShape(android.graphics.drawable.GradientDrawable.OVAL); ring.setStroke(Math.max(1, dp(1)), secondary);
+        mark.setBackground(ring);
+        android.widget.FrameLayout hit = new android.widget.FrameLayout(this);
+        hit.setPadding(dp(10), dp(10), dp(10), dp(10));
+        hit.addView(mark, new android.widget.FrameLayout.LayoutParams(dp(20), dp(20)));
+        hit.setContentDescription(label + " 정보");
+        hit.setTooltipText(info); // stylus / mouse hover shows it natively
+        hit.setTag(info);
+        hit.setOnClickListener(this::showTip);
+        return hit;
+    }
+
+    /** A switch row with an (i) right after the label. The label still toggles the switch. */
+    private Switch toggle(String label, boolean checked, CompoundButton.OnCheckedChangeListener listener, String info) {
+        LinearLayout row = new LinearLayout(this);
+        row.setGravity(android.view.Gravity.CENTER_VERTICAL);
+        row.setMinimumHeight(dp(56));
+        TextView name = phrase(new TextView(this));
+        name.setText(label); name.setTextSize(18);
+        Switch view = phrase(new Switch(this));
+        view.setChecked(checked);
+        view.setOnCheckedChangeListener(listener);
+        name.setTextColor(view.getTextColors());
+        name.setOnClickListener(v -> view.toggle());
+        row.addView(name, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        row.addView(infoMark(label, info));
+        row.addView(new android.view.View(this), new LinearLayout.LayoutParams(0, 1, 1f));
+        row.addView(view);
+        section.addView(row, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        return view;
+    }
+
+    /**
+     * Hover-style bubble under an (i) mark (user request: no dialog to confirm). Touch has no hover, so a tap shows it;
+     * a tap anywhere else (still delivered there) closes it. No timeout (user request).
+     */
+    private void showTip(android.view.View anchor) {
+        boolean night = (getResources().getConfiguration().uiMode & android.content.res.Configuration.UI_MODE_NIGHT_MASK)
+            == android.content.res.Configuration.UI_MODE_NIGHT_YES;
+        TextView tip = phrase(new TextView(this));
+        tip.setText((String) anchor.getTag()); tip.setTextSize(14);
+        tip.setTextColor(night ? 0xFF1C1B1F : 0xFFFFFFFF);
+        tip.setMaxWidth(dp(320));
+        tip.setPadding(dp(12), dp(8), dp(12), dp(8));
+        android.graphics.drawable.GradientDrawable bubble = new android.graphics.drawable.GradientDrawable();
+        bubble.setCornerRadius(dp(8)); bubble.setColor(night ? 0xF0E6E1E5 : 0xF0313033);
+        tip.setBackground(bubble);
+        android.widget.PopupWindow popup = new android.widget.PopupWindow(tip,
+            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, false);
+        popup.setOutsideTouchable(true);
+        popup.setElevation(dp(4));
+        popup.showAsDropDown(anchor, 0, -dp(6));
+        tip.setOnClickListener(v -> popup.dismiss());
+    }
+
+    private void tweakSecure(android.view.View view, String key, boolean value, boolean checked) {
+        if (syncing) return;
+        if (!Tweaks.setSecure(this, key, value)) {
+            Toast.makeText(this, "보안 설정 쓰기 권한이 필요합니다. 최초 ADB 설정 안내를 확인해주세요.", Toast.LENGTH_LONG).show();
+            setSynced((Switch) view, !checked);
+        }
+    }
+
+    private void openPage(String className) {
+        if (!Tweaks.openSettingsPage(this, className))
+            Toast.makeText(this, "이 기기에서는 이 화면을 열 수 없습니다.", Toast.LENGTH_SHORT).show();
+    }
+
+    private void renameDevice() {
+        EditText input = new EditText(this);
+        input.setSingleLine(true);
+        input.setText(Tweaks.deviceName(this));
+        input.setSelection(input.getText().length());
+        input.setFilters(new android.text.InputFilter[]{new android.text.InputFilter.LengthFilter(64)});
+        LinearLayout box = new LinearLayout(this);
+        box.setPadding(dp(24), dp(8), dp(24), 0);
+        box.addView(input, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        showPhrased(new AlertDialog.Builder(this).setTitle("기기 이름 변경").setView(box)
+            .setPositiveButton("변경", (dialog, which) -> Toast.makeText(this,
+                Tweaks.setDeviceName(this, input.getText().toString()) ? "기기 이름을 바꿨습니다."
+                    : "기기 이름을 바꾸지 못했습니다. 이름이 비어 있지 않은지, 보안 설정 쓰기 권한이 있는지 확인해주세요.",
+                Toast.LENGTH_LONG).show())
+            .setNegativeButton("취소", null));
+    }
+
+    private void openTuner() {
+        if (Tweaks.componentEnabled(this, Tweaks.TUNER) && Tweaks.start(this, new Intent().setComponent(Tweaks.TUNER))) return;
+        adbDialog("시스템 UI 튜너",
+            "시스템 UI 튜너 화면은 기본으로 숨겨져 있고, 앱 권한으로는 켤 수 없습니다. 컴퓨터에서 아래 명령을 한 번 실행한 뒤 다시 눌러주세요.",
+            "adb shell pm enable com.android.systemui/.tuner.TunerActivity");
+    }
+
+    private void installerAds() {
+        boolean frozen = Tweaks.packageFrozen(this, Tweaks.INSTALLER_PAGE);
+        adbDialog("앱 설치 프로그램 광고 제거",
+            (frozen ? "현재 상태: 광고 제거됨 (광고 페이지가 동결되어 있습니다).\n\n" : "현재 상태: 광고 표시됨 (광고 페이지가 켜져 있습니다).\n\n")
+                + "OPPO 설치 프로그램의 추천·광고 페이지(com.oplus.appdetail)를 동결합니다. 시스템 앱을 동결하는 것이라 위험할 수 있고, 앱 권한으로는 바꿀 수 없어 컴퓨터에서 실행해야 합니다.\n\n"
+                + (frozen ? "원래대로 되돌리기:" : "동결하기 (되돌릴 때는 disable-user 대신 enable):"),
+            frozen ? "adb shell pm enable com.oplus.appdetail" : "adb shell pm disable-user --user 0 com.oplus.appdetail");
+    }
+
+    private void adbDialog(String title, String message, String command) {
+        showPhrased(new AlertDialog.Builder(this).setTitle(title).setMessage(message + "\n\n" + command)
+            .setPositiveButton("명령 복사", (dialog, which) -> {
+                getSystemService(android.content.ClipboardManager.class).setPrimaryClip(ClipData.newPlainText(title, command));
+                Toast.makeText(this, "명령을 복사했습니다.", Toast.LENGTH_SHORT).show();
+            })
+            .setNegativeButton("닫기", null));
+    }
+
     /** Opens a new settings card with a bold title; following text/toggle/button calls land inside it. */
     private void section(String label) {
         section = card();
@@ -728,9 +1103,10 @@ public final class SetupActivity extends Activity {
         int split = state.indexOf(" · ");
         String head = split < 0 ? state : state.substring(0, split);
         boolean error = head.equals("오류");
+        boolean approval = head.endsWith("승인 필요"); // "승인 필요", "기기 로그 승인 필요": red headline (user request)
         SpannableStringBuilder text = new SpannableStringBuilder();
         span(text, label + "\n", new AbsoluteSizeSpan(13, true), new ForegroundColorSpan(secondary));
-        span(text, head, new AbsoluteSizeSpan(18, true), new StyleSpan(android.graphics.Typeface.BOLD), error ? new ForegroundColorSpan(ERROR_COLOR) : null);
+        span(text, head, new AbsoluteSizeSpan(18, true), new StyleSpan(android.graphics.Typeface.BOLD), error || approval ? new ForegroundColorSpan(ERROR_COLOR) : null);
         if (split >= 0) span(text, "\n" + state.substring(split + 3), error ? null : new ForegroundColorSpan(secondary));
         return text;
     }
@@ -748,6 +1124,36 @@ public final class SetupActivity extends Activity {
         view.setChecked(checked);
         view.setOnCheckedChangeListener(listener);
         section.addView(view, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        return view;
+    }
+
+    /** A switch row with a small tonal button between the label and the switch. The label still toggles the switch. */
+    private Switch toggle(String label, boolean checked, CompoundButton.OnCheckedChangeListener listener, String actionLabel, Runnable action) {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(android.view.Gravity.CENTER_VERTICAL);
+        row.setMinimumHeight(dp(56));
+        TextView name = phrase(new TextView(this));
+        name.setText(label); name.setTextSize(18);
+        Switch view = phrase(new Switch(this));
+        view.setChecked(checked);
+        view.setOnCheckedChangeListener(listener);
+        name.setTextColor(view.getTextColors()); // same color as the other switch labels
+        name.setOnClickListener(v -> view.toggle());
+        TextView link = phrase(new TextView(this));
+        link.setText(actionLabel); link.setTextSize(14); link.setTextColor(accent);
+        link.setOnClickListener(v -> action.run());
+        LinearLayout.LayoutParams linkParams = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        link.setPadding(dp(14), dp(6), dp(14), dp(6));
+        android.graphics.drawable.GradientDrawable fill = new android.graphics.drawable.GradientDrawable();
+        fill.setCornerRadius(dp(16)); fill.setColor((accent & 0x00FFFFFF) | 0x26000000); // accent at 15%
+        link.setBackground(new android.graphics.drawable.RippleDrawable(
+            android.content.res.ColorStateList.valueOf((accent & 0x00FFFFFF) | 0x40000000), fill, null));
+        linkParams.rightMargin = dp(10);
+        row.addView(name, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        row.addView(link, linkParams);
+        row.addView(view, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        section.addView(row, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         return view;
     }
 
@@ -1280,7 +1686,10 @@ public final class SetupActivity extends Activity {
         switch (BarService.logState()) {
             case LogSession.ACTIVE: return "연결됨";
             case LogSession.CONNECTING: return "확인 창에서 허용 대기 중";
-            default: return "승인 필요 · 기기 로그 접근 승인 요청을 눌러주세요";
+            default:
+                // An automatic retry opens the prompt (CONNECTING: "확인 창에서 허용 대기 중"), which refreshes this row.
+                return StatusPolicy.logDeclined(preferences.getLong(BarService.LOG_DENIED_AT, 0), preferences.getInt(BarService.LOG_DENIALS, 0),
+                    preferences.getInt(BarService.LOG_AUTO, 0), LogTrigger.AUTO_PROMPTS, BarService.DECLINE_COOLDOWN);
         }
     }
 
@@ -1304,6 +1713,7 @@ public final class SetupActivity extends Activity {
 
     @Override public void onResume() {
         super.onResume();
+        islandDemo(); // the reopened floating window of a camera-island demo
         syncing = true;
         try {
             bootSwitch.setChecked(BootRecovery.wanted(this));

@@ -3,6 +3,8 @@
     <!-- Optional alerts (settings -> 알림, both off by default): missing device-log access and a new version. Asked for
          only when the user turns one on; never a persistent or foreground notification. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Android 16 Live Updates (normal permission): only for the opt-in camera-island form of the device-log notice. -->
+    <uses-permission android:name="android.permission.POST_PROMOTED_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS" />
     <!-- Development permission granted once over ADB; each new log session still needs Android's own confirmation. -->
@@ -17,6 +19,8 @@
         <package android:name="com.google.android.googlequicksearchbox" />
         <!-- Circle to Search fallback only: the direct call is refused and MiCTS is installed. -->
         <package android:name="com.parallelc.micts" />
+        <!-- 고급 → 앱 설치 프로그램 광고 제거: shows whether this page is frozen. -->
+        <package android:name="com.oplus.appdetail" />
         <intent>
             <action android:name="android.intent.action.MAIN" />
             <category android:name="android.intent.category.LAUNCHER" />

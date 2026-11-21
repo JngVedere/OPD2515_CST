@@ -10,10 +10,11 @@ final class TouchArea {
     static final int X = 0, BOTTOM = 0, WIDTH = 200, TASKBAR_WIDTH = 240, TASKBAR_WIDTH_LAND = 330, HEIGHT = 38;
     static final int MIN_WIDTH = 60, MIN_HEIGHT = 20, MAX_HEIGHT = 160, MAX_BOTTOM = 400;
     /**
-     * User decision: down to 50 ms. Below ~200 ms an ordinary tap or the start of a home swipe can count as a hold
-     * (the settings text warns about it); a finger that moves past the touch slop still never triggers.
+     * User decisions: default 195 ms (0.3.10; was 275), minimum 50 ms. The shorter it is, the likelier an ordinary tap
+     * or the start of a home swipe counts as a hold (the settings text warns about it); a finger that moves past the
+     * touch slop still never triggers. A value the user saved is kept; only an unset value follows the default.
      */
-    static final int HOLD = 275, MIN_HOLD = 50, MAX_HOLD = 1000;
+    static final int HOLD = 195, MIN_HOLD = 50, MAX_HOLD = 1000;
     /** Wait after the Google rebind before Gemini is requested (VoiceRepair). Bounded well under POWER_LAUNCH_AGE. */
     static final int SETTLE = 15, MAX_SETTLE = 1000;
     static final String HOLD_KEY = "hold_ms", SETTLE_KEY = "gemini_settle_ms";

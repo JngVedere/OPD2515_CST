@@ -124,6 +124,10 @@ public final class LogTriggerHarness {
         check(!StatusPolicy.updateCheckDue(t0 + day - 1, t0) && !StatusPolicy.updateCheckDue(t0 + 60_000, t0), "No second check within 24 h");
         check(StatusPolicy.updateCheckDue(t0 + day, t0) && StatusPolicy.updateCheckDue(t0 + 3 * day, t0), "Due again after 24 h");
         check(StatusPolicy.updateCheckDue(t0 - 1, t0), "A clock set backwards does not block checks");
+        // Device-log refusal status: count, automatic retry rule (user wording), then the manual hint once retries run out.
+        check(StatusPolicy.logDeclined(0, 0, 0, 3, 60_000).startsWith("승인 필요"), "No refusal: plain request");
+        check(StatusPolicy.logDeclined(t0, 1, 1, 3, 60_000).equals("승인 거부됨 (이번 부팅 1회) · 자동 요청은 60초마다 진행되며 최대 3회까지 됩니다. 사용을 원하는 경우 수동으로 승인해주세요"), "Refusal shows count and retry rule");
+        check(StatusPolicy.logDeclined(t0, 3, 3, 3, 60_000).contains("자동 요청 3회를 모두 사용") && StatusPolicy.logDeclined(t0, 0, 0, 3, 60_000).contains("1회"), "Retries used up: manual hint; count never shows 0");
         check(TouchArea.taskbar("1", "3") && TouchArea.taskbar("1", null), "Gesture bar with the taskbar on: wide default");
         check(!TouchArea.taskbar("1", "0") && !TouchArea.taskbar("0", "3") && !TouchArea.taskbar(null, "3") && !TouchArea.taskbar("true", "3"), "3-button, taskbar off or unreadable: narrow default");
         check(TouchArea.fallback("width", true, false) == 240 && TouchArea.fallback("width", true, true) == 330

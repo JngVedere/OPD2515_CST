@@ -20,7 +20,9 @@ import android.view.accessibility.AccessibilityEvent;
 public final class BarService extends AccessibilityService {
     static final String MODE = "trigger_mode", TOUCH = "touch", NATIVE = "coloros_log", POWER = "power_gemini";
     static final String STATE_CHANGED = "dev.padhelper.fastcts.STATE_CHANGED";
-    private static final String LOG_BOOT = "log_boot", LOG_AUTO = "log_auto", LOG_DECLINED = "log_declined";
+    private static final String LOG_BOOT = "log_boot", LOG_DECLINED = "log_declined";
+    /** Automatic prompts used this boot (at most LogTrigger.AUTO_PROMPTS); read by the settings status. */
+    static final String LOG_AUTO = "log_auto";
     private static final long BRIDGE_LIFETIME = 13000;
     private static BarService instance;
     static volatile boolean running;
@@ -162,6 +164,31 @@ public final class BarService extends AccessibilityService {
         service.notifyState();
         return opened;
     }
+
+    /**
+     * The bridge timed out without focus, so it asked nothing: the next automatic prompt follows shortly (still within the
+     * per-boot AUTO_PROMPTS cap). No refusal happened, so Android's post-refusal wait does not apply.
+     */
+    static void logBridgeUnused() {
+        BarService service = instance;
+        if (service == null) return;
+        service.handler.removeCallbacks(service.autoRetry);
+        service.handler.postDelayed(service.autoRetry, UNUSED_BRIDGE_RETRY);
+    }
+    private static final long UNUSED_BRIDGE_RETRY = 2_000;
+
+    /** The bridge regained focus after its request: Android's confirmation closed (see LogSession.answered). */
+    static void logAnswered() {
+        BarService service = instance;
+        if (service != null) service.logs.answered();
+    }
+
+    /**
+     * Last refusal (wall clock, 0 = none) and refusals this boot, for the settings status. Device: after a refusal Android
+     * silently refuses new requests for about a minute (DECLINE_COOLDOWN), so a retry before then shows nothing.
+     */
+    static final String LOG_DENIED_AT = "log_denied_at", LOG_DENIALS = "log_denials";
+    static final long DECLINE_COOLDOWN = 60_000;
 
     /** Explicit user action from settings: one more standard confirmation, even after an earlier decline. */
     static void requestApproval(Context context) {
@@ -434,31 +461,46 @@ public final class BarService extends AccessibilityService {
     private boolean logWasActive;
 
     /**
-     * A minute after the service connects, a wanted session that is still not approved. Device: after an update installed
+     * Shortly after the service connects, a wanted session that is still not approved. Device: after an update installed
      * while locked, no prompt could show and the unlock broadcast was skipped, so the session stayed off with no decline.
+     * While the approval prompt is up the check waits for it instead (its answer, or its timeout, decides).
      */
-    private final Runnable logCheck = () -> {
-        if (instance == this && logsWanted(this) && logsPermitted(this) && logs.state() != LogSession.ACTIVE)
-            Alerts.logMissing(this, true, "기기 로그 승인이 필요합니다", "ColorOS 기본 바·전원 버튼 실행이 멈춰 있습니다. 눌러서 승인해주세요.");
+    private final Runnable logCheck = new Runnable() {
+        @Override public void run() {
+            if (instance != BarService.this || !logsWanted(BarService.this) || !logsPermitted(BarService.this)
+                    || logs.state() == LogSession.ACTIVE) return;
+            if (bridgeShowing() || logs.state() == LogSession.CONNECTING) { handler.postDelayed(this, LOG_CHECK_DELAY); return; }
+            Alerts.logMissing(BarService.this, true, "기기 로그 승인이 필요합니다", "ColorOS 기본 바·전원 버튼 실행이 멈춰 있습니다. 눌러서 승인해주세요.");
+        }
     };
     /**
-     * After a decline the notice waits this long: the decline is seen only at the 35 s activation timeout, and Android
-     * silently declines new requests for about a minute after one (device), so an immediate tap would show no prompt.
+     * After a refusal, one automatic prompt per DECLINE_COOLDOWN (user decision), within the per-boot AUTO_PROMPTS cap and
+     * only on an interactive, unlocked screen; afterwards the unlock watch takes over. The user still answers every prompt.
+     * The notice follows a little later, so a running retry makes it wait instead of doubling up.
      */
-    private static final long LOG_CHECK_DELAY = 60_000, DECLINED_ALERT_DELAY = 30_000;
+    private final Runnable autoRetry = () -> maybeAutoPrompt(true);
+    private static final long LOG_CHECK_DELAY = 15_000, RETRY_NOTICE_GAP = 2_000;
 
     private final LogSession.Listener logEvents = new LogSession.Listener() {
         @Override public void stateChanged(boolean declined) {
             powerRequest++; // A session change cancels a power request from the old session.
-            if (declined) prefs(BarService.this).edit().putBoolean(LOG_DECLINED, true).apply();
+            SharedPreferences bar = prefs(BarService.this);
+            if (declined) bar.edit().putBoolean(LOG_DECLINED, true).putLong(LOG_DENIED_AT, System.currentTimeMillis())
+                .putInt(LOG_DENIALS, bar.getInt(LOG_DENIALS, 0) + 1).apply();
             int state = logs.state();
             if (state == LogSession.ACTIVE) {
                 // Approved after all: an earlier (possibly timed-out) decline no longer holds back later auto prompts.
-                prefs(BarService.this).edit().putBoolean(LOG_DECLINED, false).apply();
+                bar.edit().putBoolean(LOG_DECLINED, false).remove(LOG_DENIED_AT).apply();
                 handler.removeCallbacks(logCheck);
+                handler.removeCallbacks(autoRetry);
                 Alerts.logRestored(BarService.this);
             }
-            else if (declined) { handler.removeCallbacks(logCheck); handler.postDelayed(logCheck, DECLINED_ALERT_DELAY); }
+            else if (declined) {
+                handler.removeCallbacks(autoRetry);
+                handler.postDelayed(autoRetry, DECLINE_COOLDOWN);
+                handler.removeCallbacks(logCheck);
+                handler.postDelayed(logCheck, DECLINE_COOLDOWN + RETRY_NOTICE_GAP);
+            }
             else if (logsWanted(BarService.this) && logWasActive && state == LogSession.OFF)
                 Alerts.logMissing(BarService.this, true, "기기 로그 연결이 끊겼습니다", "ColorOS 기본 바·전원 버튼 실행이 멈췄습니다. 눌러서 다시 승인해주세요.");
             logWasActive = state == LogSession.ACTIVE;
@@ -545,19 +587,43 @@ public final class BarService extends AccessibilityService {
         SharedPreferences bar = prefs(this);
         int boot = Settings.Global.getInt(getContentResolver(), Settings.Global.BOOT_COUNT, -1);
         if (bar.getInt(LOG_BOOT, -2) != boot)
-            bar.edit().putInt(LOG_BOOT, boot).putInt(LOG_AUTO, 0).putBoolean(LOG_DECLINED, false).apply();
+            bar.edit().putInt(LOG_BOOT, boot).putInt(LOG_AUTO, 0).putBoolean(LOG_DECLINED, false).remove(LOG_DENIED_AT).putInt(LOG_DENIALS, 0).apply();
         int attempts = bar.getInt(LOG_AUTO, 0);
         PowerManager power = getSystemService(PowerManager.class);
         boolean declined = !afterUnlock && bar.getBoolean(LOG_DECLINED, false);
+        long deniedAt = bar.getLong(LOG_DENIED_AT, 0);
+        if (declined && deniedAt > 0 && logs.state() == LogSession.OFF) {
+            // The retry after a refusal lives in this process's handler; a restart (reinstall, ColorOS killing the app)
+            // lost it while the settings status still promised it. Re-arm it from the stored refusal time.
+            handler.removeCallbacks(autoRetry);
+            handler.postDelayed(autoRetry, Math.max(0, Math.min(DECLINE_COOLDOWN, deniedAt + DECLINE_COOLDOWN - System.currentTimeMillis())));
+        }
         if (!LogTrigger.autoPrompt(granted(this) && logsWanted(this), logsPermitted(this), logs.state() != LogSession.OFF,
                 bridgeShowing(), power.isInteractive(), getSystemService(KeyguardManager.class).isKeyguardLocked(),
                 declined, attempts)) {
             Log.i("PadLog", "auto prompt skipped: state=" + logs.state() + " declined=" + declined + " attempts=" + attempts);
             return;
         }
+        // First prompt of a boot waits until GUIDE_SETTLE after this service connected. Device (ColorOS 17): at unlock
+        // ColorOS clears enabled_accessibility_services, boot recovery adds this service back, and ColorOS's anti-fraud
+        // check (FraudBehaviorDetectManager) then opens its accessibility warning 30 s later, with a 4 s countdown that
+        // ignores every other tap. A confirmation asked before it ended up under it, so "허용 안 함" or a tap beside the
+        // dialog seemed to freeze the tablet. The bridge also asks only while it has focus.
+        long sinceConnect = SystemClock.elapsedRealtime() - connectedAt;
+        if (attempts == 0 && sinceConnect < GUIDE_SETTLE) {
+            handler.removeCallbacks(bootPrompt);
+            handler.postDelayed(bootPrompt, GUIDE_SETTLE - sinceConnect);
+            Log.i("PadLog", "first prompt waits " + (GUIDE_SETTLE - sinceConnect) + " ms for the ColorOS accessibility warning");
+            return;
+        }
         bar.edit().putInt(LOG_AUTO, attempts + 1).apply();
         launchBridge(this);
     }
+
+    private static final long GUIDE_SETTLE = 32_000;
+    /** elapsedRealtime of onServiceConnected (accessibility just enabled or re-added). */
+    private long connectedAt;
+    private final Runnable bootPrompt = () -> maybeAutoPrompt(true);
 
     private final BroadcastReceiver screen = new BroadcastReceiver() {
         @Override public void onReceive(Context context, Intent intent) {
@@ -623,6 +689,7 @@ public final class BarService extends AccessibilityService {
     @Override protected void onServiceConnected() {
         super.onServiceConnected();
         instance = this;
+        connectedAt = SystemClock.elapsedRealtime();
         prefs(this).edit().putBoolean(BootRecovery.APPROVED, true).remove("native_bar").apply();
         running = enabled(this);
         Alerts.scheduleUpdateCheck(this); // restores the job after a force-stop or reinstall cleared it
@@ -747,6 +814,8 @@ public final class BarService extends AccessibilityService {
         powerRequest++;
         handler.removeCallbacks(warm);
         handler.removeCallbacks(logCheck);
+        handler.removeCallbacks(autoRetry);
+        handler.removeCallbacks(bootPrompt);
         handler.removeCallbacks(unlockWatch);
         running = false;
         cancelPending();

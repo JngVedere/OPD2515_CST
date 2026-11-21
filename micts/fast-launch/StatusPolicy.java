@@ -81,7 +81,7 @@ final class StatusPolicy {
         if (!approved) return "접근성 설정 필요";
         if (!live) return "접근성 서비스 연결 대기";
         if (!logsPermitted) return "기기 로그 권한 필요 · 최초 ADB 설정 안내 참고";
-        if (!logActive) return logWaiting ? "기기 로그 확인 창에서 허용 대기" : "기기 로그 승인 필요 · 기기 로그 접근 승인 요청을 눌러주세요";
+        if (!logActive) return logWaiting ? "기기 로그 확인 창에서 허용 대기" : "기기 로그 승인 필요 · 위쪽 안내를 눌러 승인해주세요";
         if (google != GOOGLE_READY) return "Gemini 요청 불가 · " + googleProblem(google);
         return "감지 중 · 길게 누르면 Gemini Assistant 요청" + CONFIG_ONLY
             + (secureWrite ? "" : " (보안 설정 쓰기 권한 없음: Google 재연결 생략)");
@@ -179,6 +179,19 @@ final class StatusPolicy {
             if (id <= 0 || outcome < PENDING || outcome > ACCEPTED) return null;
             return new Record(id, Long.parseLong(f[1]), Long.parseLong(f[2]), outcome, f[4], f[5]);
         } catch (NumberFormatException invalid) { return null; }
+    }
+
+    /**
+     * Device-log status row while the session is off: a refusal this boot (with its count and the automatic retry rule,
+     * user wording) or a plain request. autoUsed/autoMax: automatic prompts used and allowed this boot.
+     */
+    static String logDeclined(long deniedAt, int denials, int autoUsed, int autoMax, long cooldown) {
+        if (deniedAt <= 0) return "승인 필요 · 위쪽 안내를 눌러 승인해주세요";
+        String head = "승인 거부됨 (이번 부팅 " + Math.max(1, denials) + "회) · ";
+        if (autoUsed >= autoMax)
+            return head + "자동 요청 " + autoMax + "회를 모두 사용했습니다. 사용을 원하는 경우 위쪽 안내를 눌러 수동으로 승인해주세요";
+        return head + "자동 요청은 " + (cooldown / 1000) + "초마다 진행되며 최대 " + autoMax
+            + "회까지 됩니다. 사용을 원하는 경우 수동으로 승인해주세요";
     }
 
     /** Optional update notification: one GitHub check per 24 h (Alerts). */
