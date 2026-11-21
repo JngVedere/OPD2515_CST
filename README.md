@@ -9,7 +9,7 @@
 OPPO Pad Mini에서 Google 서클 투 서치를 편하게 열 수 있도록 도와주는 Android 앱입니다. 서클 투 서치 대신 자주 사용하는 다른 앱을 연결할 수도 있습니다. 루팅 없이 사용할 수 있으며, MiCTS 없이 서클 투 서치를 직접 실행합니다.
 기존에 있던 다른 앱 대비 반응성과 User Experience에서의 자연스러움을 최대한 고려한 앱입니다.
 
-[**APK 다운로드 (약 110KB)**](https://github.com/JngVedere/OPD2515_CST/releases/latest)
+[**APK 다운로드**](https://github.com/JngVedere/OPD2515_CST/releases/latest)
 
 ## 주요 기능
 
