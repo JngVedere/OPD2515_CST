@@ -32,7 +32,8 @@ final class StatusPolicy {
     }
 
     /**
-     * ColorOS "제스처 안내 막대 숨기기" as observed read-only in secure navbar_gesture_visibility (OPD2515: 1 hidden, 0 shown).
+     * ColorOS "제스처 안내 막대 숨기기" as observed read-only in secure gesture_side_hide_bar_prevention_enable (OPD2515: 1 hidden, 0 shown;
+     * ColorOS then drops the bar's long-press option, so the bar trigger cannot work).
      * Missing, unreadable or any other value is unknown, never assumed shown.
      * GESTURE_TASKBAR: system enable_launcher_taskbar is exactly "1"; the launcher's taskbar bar reports the hold itself
      * (observed even with the gesture bar hidden), so the hide setting is not an error. Any other taskbar value keeps the old rules.
@@ -59,7 +60,7 @@ final class StatusPolicy {
         String where = nativeMode ? (buttons ? "3버튼 홈 버튼" : "ColorOS 기본 바") : "터치 영역";
         if (nativeMode) {
             if (gestureBar == GESTURE_HIDDEN)
-                return "오류 · 제스처 안내 막대 숨기기가 켜져 있습니다. 설정 → 시스템 및 업데이트 → 시스템 탐색에서 끄세요";
+                return "오류 · 제스처 안내 막대 숨기기가 켜져 있습니다.\n설정 → 시스템 및 업데이트 → 시스템 탐색에서 꺼주세요";
             if (!secureWrite) return "보안 설정 쓰기 권한 필요 · " + where;
             if (!breenoOff) return "Breeno 비활성화 필요 · " + where;
             if (!logsPermitted) return "기기 로그 권한 필요 · " + where;
@@ -68,10 +69,10 @@ final class StatusPolicy {
         } else if (!ready) return "터치 영역 연결 대기 · 잠금 해제 후 다시 확인";
         if (cts && google != GOOGLE_READY) return where + " 감지 중 · 서클 투 서치: " + googleProblem(google);
         if (nativeMode && gestureBar != GESTURE_SHOWN && gestureBar != GESTURE_TASKBAR && !buttons)
-            return where + " 감지 중 · 제스처 안내 막대 표시 여부 확인 불가 (설정 → 시스템 및 업데이트 → 시스템 탐색에서 숨기기가 꺼져 있는지 확인)";
+            return where + " 감지 중 · 제스처 안내 막대가 보이는지 확인할 수 없습니다.\n설정 → 시스템 및 업데이트 → 시스템 탐색에서\n숨기기가 꺼져 있는지 확인해주세요";
         return "사용 중 · " + where + " 감지 중" + (cts ? " · Google 설정됨, 실제 연결 상태는 확인 불가" : "")
             + (nativeMode && gestureBar == GESTURE_TASKBAR ? " · 작업 표시줄 기준" : "")
-            + (!nativeMode && buttons ? " · 3버튼 탐색에서 홈 화면의 최근 앱 버튼을 가리면 터치 영역에서 위치를 옮기세요" : "");
+            + (!nativeMode && buttons ? "\n3버튼 탐색에서 최근 앱 버튼을 가리면 터치 영역 위치를 옮겨주세요" : "");
     }
 
     /** Power long press -> small Gemini readiness. Breeno is not a prerequisite here; WSS only enables the per-press rebind. */
@@ -140,7 +141,9 @@ final class StatusPolicy {
         return "시각  " + time("yyyy-MM-dd HH:mm:ss", record.started)
             + "\n입력  " + record.source
             + "\n결과  " + result(record, now)
-            + "\n내용  " + record.detail + (interrupted(record, now) ? " · 이후 결과가 기록되지 않음 (실행 차단 또는 앱 종료 가능)" : "");
+            // One part per line (user request: no mid-phrase wraps), indented under the 내용 label.
+            + "\n내용  " + (record.detail + (interrupted(record, now) ? " · 이후 결과가 기록되지 않음 (실행 차단 또는 앱 종료 가능)" : ""))
+                .replace(" · ", "\n         ");
     }
 
     private static boolean interrupted(Record record, long now) {
@@ -189,7 +192,7 @@ final class StatusPolicy {
         if (deniedAt <= 0) return "승인 필요 · 위쪽 안내를 눌러 승인해주세요";
         String head = "승인 거부됨 (이번 부팅 " + Math.max(1, denials) + "회) · ";
         if (autoUsed >= autoMax)
-            return head + "자동 요청 " + autoMax + "회를 모두 사용했습니다. 사용을 원하는 경우 위쪽 안내를 눌러 수동으로 승인해주세요";
+            return head + "자동 요청 " + autoMax + "회를 모두 사용했습니다.\n사용하려면 위쪽 안내를 눌러 직접 승인해주세요";
         return head + "자동 요청은 " + (cooldown / 1000) + "초마다 진행되며 최대 " + autoMax
             + "회까지 됩니다. 사용을 원하는 경우 수동으로 승인해주세요";
     }

@@ -24,7 +24,13 @@ final class LogSession {
     interface Listener {
         void stateChanged(boolean declined);
         void trigger(int kind);
+        /** 일부 앱에서 하단 영역 인식 강제 사용: an app switch, selected = the resumed app is one of touchApps. */
+        void foreground(boolean selected);
     }
+
+    /** Packages for 일부 앱에서 하단 영역 인식 강제 사용; null while that option is off (no app switch is parsed). */
+    private volatile java.util.Set<String> touchApps;
+    void touchApps(java.util.Set<String> apps) { touchApps = apps == null || apps.isEmpty() ? null : apps; }
 
     private final Handler handler;
     private final Listener listener;
@@ -87,6 +93,9 @@ final class LogSession {
                     coalesced = true;
                     Log.w(TAG, "coalesced read session=" + session + " bytes=" + count + " extra=" + LogTrigger.trailing(packet, count));
                 }
+                java.util.Set<String> apps = touchApps;
+                int app = trusted && apps != null ? LogTrigger.foreground(packet, count, user, apps) : -1;
+                if (app != -1) handler.post(() -> { if (current(session)) listener.foreground(app == LogTrigger.SELECTED_APP); });
                 int candidate = LogTrigger.candidate(packet, count);
                 int kind = trusted ? LogTrigger.classify(packet, count, systemUiUid, launcherUid, user) : LogTrigger.NONE;
                 long now = System.currentTimeMillis();

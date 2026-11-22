@@ -12,9 +12,11 @@ import android.util.Log;
 /**
  * Optional system tweaks under 설정 → 고급 (user request; the same switches the 欢太工具箱 app offers, written here with this
  * app's own WRITE_SECURE_SETTINGS instead of a shell). Every key written is listed in this class and pinned by the
- * security test; nothing is written unless the user flips the matching switch.
- * Not possible without a shell (no permission an app can hold): enabling the hidden System UI Tuner screen, freezing
- * the OPPO installer page (com.oplus.appdetail) and the private refresh-rate keys. Those show the ADB command instead.
+ * security test; nothing is written unless the user flips the matching switch or resets all settings, except the one
+ * default in applyDefaults.
+ * Not possible without a shell (no permission an app can hold): freezing the OPPO installer page (com.oplus.appdetail),
+ * which shows the ADB command instead. The refresh rate goes through ColorOS's own Secure key, not the private System
+ * keys. The System UI Tuner opens through TUNER_ALIAS.
  */
 final class Tweaks {
     private Tweaks() {}
@@ -22,20 +24,33 @@ final class Tweaks {
     // Secure keys (Android / SystemUI).
     static final String EXTRA_DIM = "reduce_bright_colors_activated", ROTATION_SUGGESTIONS = "show_rotation_suggestions",
         CLOCK_SECONDS = "clock_seconds";
+    /**
+     * ColorOS Settings shows 개발자 옵션 → 'Disable system optimization' only in English, or when this secure flag is 1
+     * (device Settings: SystemOptimizationPreferenceController.isAvailable). LuckyTool's '显示禁用系统优化' sets the same flag.
+     */
+    static final String SYSTEM_OPT = "system_opt_enable";
     // Device name: global names + the Bluetooth and hotspot names shown to other devices.
     private static final String NAME_GLOBAL = "device_name", NAME_REVISED = "revise_device_name",
         NAME_BLUETOOTH = "bluetooth_name", NAME_TETHER = "device_tether_name";
 
     static final ComponentName TUNER = new ComponentName("com.android.systemui", "com.android.systemui.tuner.TunerActivity");
+    /** Exported, permissionless activity-alias of TunerActivity that stays enabled while the activity itself is disabled. */
+    static final ComponentName TUNER_ALIAS = new ComponentName("com.android.systemui", "com.android.systemui.DemoMode");
     static final String INSTALLER_PAGE = "com.oplus.appdetail";
 
     private static SharedPreferences prefs(Context context) { return context.getSharedPreferences("bar", Context.MODE_PRIVATE); }
 
     /**
-     * These three keys are @hide: since Android 12 an app may write them (WRITE_SECURE_SETTINGS) but not read them
+     * These keys are @hide: since Android 12 an app may write them (WRITE_SECURE_SETTINGS) but not read them
      * (device: SecurityException "is not readable"). So the switches show what this app last wrote; unset is the default.
      */
     static boolean secureOn(Context context, String key, boolean unset) {
+        // SYSTEM_OPT is ColorOS's own key, not an Android one; read it when allowed (another app such as LuckyTool may
+        // have set it), else fall back to what this app last wrote.
+        if (SYSTEM_OPT.equals(key)) {
+            try { return Settings.Secure.getInt(context.getContentResolver(), key, unset ? 1 : 0) == 1; }
+            catch (RuntimeException unreadable) { Log.i("PadTweaks", "secure read refused: " + key); }
+        }
         return prefs(context).getBoolean(STATE + key, unset);
     }
 
@@ -43,7 +58,7 @@ final class Tweaks {
 
     /** Writes one of this class's secure keys and remembers it; false when the write was refused. */
     static boolean setSecure(Context context, String key, boolean on) {
-        if (!EXTRA_DIM.equals(key) && !ROTATION_SUGGESTIONS.equals(key) && !CLOCK_SECONDS.equals(key)) return false;
+        if (!EXTRA_DIM.equals(key) && !ROTATION_SUGGESTIONS.equals(key) && !CLOCK_SECONDS.equals(key) && !SYSTEM_OPT.equals(key)) return false;
         try {
             if (!Settings.Secure.putInt(context.getContentResolver(), key, on ? 1 : 0)) return false;
         } catch (RuntimeException refused) { Log.w("PadTweaks", "secure write refused: " + key); return false; }
@@ -51,28 +66,55 @@ final class Tweaks {
         return true;
     }
 
-    // --- High refresh -------------------------------------------------------------------------------------------------
-    // The rate keys are private System settings: SettingsProvider refuses them to any app (IllegalArgumentException on the
-    // device, even with WRITE_SECURE_SETTINGS). 欢太工具箱 writes them through Shizuku (shell); here the user runs the
-    // same commands over ADB.
+    // --- Max refresh rate ---------------------------------------------------------------------------------------------
+    // ColorOS keeps its 화면 주사율 choice in a Secure key, which this app may write with WRITE_SECURE_SETTINGS (no ADB).
+    // Device: writing it alone is enough, ColorOS moves the private System peak_refresh_rate itself (60, 90 and 120 took
+    // effect at once). Indexes from Settings' ScreenRefreshRateController: 0 auto, 1 = 90, 2 = 60, 3 = 120, 4 = 144.
+    // 144 stays 120 outside apps ColorOS lets run at 144 (games), even with peak_refresh_rate forced to 144 over ADB.
 
-    static final String HIGH_REFRESH_ON = "adb shell \"settings put secure oplus_customize_screen_refresh_rate 0; "
-        + "settings put system peak_refresh_rate 1; settings put system min_refresh_rate 1; settings put system user_refresh_rate 1\"";
+    private static final String REFRESH_KEY = "oplus_customize_screen_refresh_rate";
+    /** 0 = ColorOS's 자동 (index 0), the rest in Hz. */
+    static final int[] REFRESH_RATES = {0, 60, 90, 120, 144};
+    private static final int[] REFRESH_INDEXES = {0, 2, 1, 3, 4};
 
-    /** Puts the peak back to the display's highest rate (what ColorOS stores when a rate is picked in its own panel). */
-    static String highRefreshOff(Context context) {
-        String max = maxRefreshRate(context);
-        return "adb shell settings put system peak_refresh_rate " + (max == null ? "144.0" : max);
+    /** The chosen rate in Hz, 0 for ColorOS's 자동, -1 when unreadable or unknown. */
+    static int maxRefreshRate(Context context) {
+        int index;
+        try { index = Settings.Secure.getInt(context.getContentResolver(), REFRESH_KEY, -1); }
+        catch (RuntimeException unreadable) { return -1; }
+        for (int i = 0; i < REFRESH_INDEXES.length; i++) if (REFRESH_INDEXES[i] == index) return REFRESH_RATES[i];
+        return -1;
     }
 
-    /** Highest refresh rate this display offers, as Settings stores it ("144.0"); null when unknown. */
-    private static String maxRefreshRate(Context context) {
-        android.view.Display display = context.getSystemService(android.hardware.display.DisplayManager.class)
-            .getDisplay(android.view.Display.DEFAULT_DISPLAY);
-        if (display == null) return null;
-        float best = 0;
-        for (android.view.Display.Mode mode : display.getSupportedModes()) best = Math.max(best, mode.getRefreshRate());
-        return best > 0 ? String.valueOf((float) Math.round(best)) : null;
+    /** Writes one of REFRESH_RATES (0 = 자동); false when the rate is not offered or the write was refused. */
+    static boolean setMaxRefreshRate(Context context, int hz) {
+        for (int i = 0; i < REFRESH_RATES.length; i++) {
+            if (REFRESH_RATES[i] != hz) continue;
+            try { return Settings.Secure.putInt(context.getContentResolver(), REFRESH_KEY, REFRESH_INDEXES[i]); }
+            catch (RuntimeException refused) { Log.w("PadTweaks", "refresh rate refused"); return false; }
+        }
+        return false;
+    }
+
+    // --- Animation scale ----------------------------------------------------------------------------------------------
+    // Developer options offer 0.5x steps only; the three Global keys take any value (欢太工具箱's 动画速度 writes the same
+    // keys with Settings.Global.putFloat). WindowManager follows the keys at once, no restart needed.
+
+    private static final String[] ANIMATION_KEYS = {"window_animation_scale", "transition_animation_scale", "animator_duration_scale"};
+
+    /** The animator duration scale stands for all three (they are set together here). */
+    static float animationScale(Context context) {
+        return Settings.Global.getFloat(context.getContentResolver(), ANIMATION_KEYS[2], 1f);
+    }
+
+    /** Writes the same scale to all three keys; false when a write was refused. */
+    static boolean setAnimationScale(Context context, float scale) {
+        if (scale < 0f || scale > 10f) return false;
+        try {
+            boolean all = true;
+            for (String key : ANIMATION_KEYS) all &= Settings.Global.putFloat(context.getContentResolver(), key, scale);
+            return all;
+        } catch (RuntimeException refused) { Log.w("PadTweaks", "animation scale refused"); return false; }
     }
 
     // --- Device name --------------------------------------------------------------------------------------------------
@@ -99,6 +141,54 @@ final class Tweaks {
         }
     }
 
+    // --- Extra dim (딥 다크 모드 tile) ---------------------------------------------------------------------------------
+
+    /**
+     * Whether Extra Dim is on, from ColorDisplayManager (hidden API, no permission to read); the secure key itself is
+     * unreadable to apps. null when unavailable.
+     */
+    static Boolean extraDim(Context context) {
+        try {
+            Object manager = context.getSystemService("color_display");
+            if (manager == null) return null;
+            Object on = org.lsposed.hiddenapibypass.HiddenApiBypass.invoke(manager.getClass(), manager, "isReduceBrightColorsActivated");
+            return on instanceof Boolean ? (Boolean) on : null;
+        } catch (ReflectiveOperationException | RuntimeException unavailable) { return null; }
+    }
+
+    static boolean setExtraDim(Context context, boolean on) { return setSecure(context, EXTRA_DIM, on); }
+
+    /**
+     * 시스템 최적화 비활성화 항목 표시 is on by default (user request): written once, as soon as this app may write it
+     * (until then setSecure fails and nothing is remembered, so the next open tries again). The other switches default
+     * to the system's own values, so they need no write.
+     */
+    static void applyDefaults(Context context) {
+        if (!prefs(context).contains(STATE + SYSTEM_OPT)) setSecure(context, SYSTEM_OPT, true);
+    }
+
+    /** 모든 설정 초기화: every switch of this class back to its default (fails quietly without 보안 설정 쓰기). */
+    static void resetDefaults(Context context) {
+        setSecure(context, ROTATION_SUGGESTIONS, true); // rotation button shown again = '자동 회전 제안 끄기' off
+        setSecure(context, CLOCK_SECONDS, false);
+        setSecure(context, SYSTEM_OPT, true);
+        setAnimationScale(context, 1f);
+    }
+
+    // --- Developer options --------------------------------------------------------------------------------------------
+
+    private static final String DEVELOPER = "development_settings_enabled"; // Settings.Global, the switch itself
+
+    static boolean developerOptionsOn(Context context) {
+        return Settings.Global.getInt(context.getContentResolver(), DEVELOPER, 0) == 1;
+    }
+
+    /** Only switches developer options on (never off); false when the write was refused. */
+    static boolean enableDeveloperOptions(Context context) {
+        try { return Settings.Global.putInt(context.getContentResolver(), DEVELOPER, 1); }
+        catch (RuntimeException refused) { Log.w("PadTweaks", "developer options refused"); return false; }
+    }
+
     // --- Screens and component states ---------------------------------------------------------------------------------
 
     /** Disabled component or package (only an ADB/shell command can change it). */
@@ -123,8 +213,16 @@ final class Tweaks {
         return start(context, new Intent().setClassName("com.android.settings", className));
     }
 
+    /**
+     * From an activity the page joins that activity's task, so Back returns to it (device: with a new task, Back from
+     * 더 어둡게 went to the home screen); from any other context it needs its own task.
+     */
     static boolean start(Context context, Intent intent) {
-        try { context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); return true; }
-        catch (ActivityNotFoundException | SecurityException unavailable) { return false; }
+        if (!(context instanceof android.app.Activity)) intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        try { context.startActivity(intent); return true; }
+        catch (ActivityNotFoundException | SecurityException unavailable) {
+            Log.w("PadTweaks", "page unavailable: " + intent.getAction() + " " + intent.getComponent() + " " + unavailable.getClass().getSimpleName());
+            return false;
+        }
     }
 }

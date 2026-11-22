@@ -95,6 +95,37 @@ public final class BarService extends AccessibilityService {
     }
 
     static boolean nativeMode(Context context) { return NATIVE.equals(prefs(context).getString(MODE, TOUCH)); }
+
+    /**
+     * Experimental (설정 → 고급 → 실험적 기능), off by default: this service runs as a plain started service with the
+     * "다른 앱 위에 표시" permission instead of being bound by accessibility. Device-tested trade-offs: nothing restarts it
+     * after a kill, an app overlay cannot cover the 3-button bar, and the power double press (screen off) is unavailable.
+     */
+    static final String OVERLAY_MODE = "overlay_mode";
+    static boolean overlayMode(Context context) { return prefs(context).getBoolean(OVERLAY_MODE, false); }
+    static void setOverlayMode(Context context, boolean on) { prefs(context).edit().putBoolean(OVERLAY_MODE, on).apply(); }
+    /** Main thread: true while accessibility holds this service, false while it runs as a started service (overlay mode). */
+    private boolean bound;
+    /** Overlay mode: windows added without the accessibility window token. */
+    private WindowManager appWindows;
+    /**
+     * 고급 → 실험적 기능 → 호환성 개선, both off by default.
+     * TOUCH_APPS_ON: in the ColorOS-bar mode, the touch area replaces the bar while one of TOUCH_APPS is in front (device:
+     * game mode freezes this app, so the log trigger stops in games). The app switch comes from the same system log
+     * session (LogTrigger.foreground), never from accessibility events; without an active session the bar mode stays.
+     * FAST_RECOVER: the approval prompt opens right after a lost session (recoverPrompt).
+     */
+    static final String TOUCH_APPS_ON = "touch_apps_on", TOUCH_APPS = "touch_apps", FAST_RECOVER = "log_fast_recover";
+    static boolean touchAppsOn(Context context) { return prefs(context).getBoolean(TOUCH_APPS_ON, false); }
+    static java.util.Set<String> touchApps(Context context) {
+        return new java.util.HashSet<>(prefs(context).getStringSet(TOUCH_APPS, java.util.Collections.emptySet()));
+    }
+    static boolean fastRecover(Context context) { return prefs(context).getBoolean(FAST_RECOVER, false); }
+    /** Main thread: a selected app is in front, so the touch area stands in for the ColorOS bar. */
+    private boolean touchApp;
+    /** The bar is read from the log right now (ColorOS-bar mode and no selected app in front). */
+    private boolean nativeNow() { return nativeMode(this) && !touchApp; }
+
     static void setMode(Context context, String mode) {
         if (!TOUCH.equals(mode) && !NATIVE.equals(mode)) throw new IllegalArgumentException("Unknown trigger mode");
         prefs(context).edit().putString(MODE, mode).apply();
@@ -221,7 +252,7 @@ public final class BarService extends AccessibilityService {
         running = false;
         if (instance != null) { instance.cancelPending(); instance.detach(); instance.configure(); }
         if (!BarGesture.restore(context)) android.widget.Toast.makeText(context,
-            "기본 바 설정 복구를 완료하지 못했습니다. 권한과 저장 공간을 확인한 뒤 다시 끄기를 눌러주세요.",
+            "기본 바 설정 복구를 완료하지 못했습니다.\n권한과 저장 공간을 확인한 뒤\n다시 끄기를 눌러주세요.",
             android.widget.Toast.LENGTH_LONG).show();
     }
 
@@ -253,7 +284,7 @@ public final class BarService extends AccessibilityService {
         int[] area = area(this, bounds.width() > bounds.height(),
             Math.round(bounds.width() / density), Math.round(bounds.height() / density));
         WindowManager.LayoutParams p = new WindowManager.LayoutParams(dp(area[2]), dp(area[3]),
-            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+            bound ? WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY : WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
                 | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS, PixelFormat.TRANSLUCENT);
         p.gravity = Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL;
@@ -282,6 +313,7 @@ public final class BarService extends AccessibilityService {
     }
 
     static boolean granted(Context context) {
+        if (overlayMode(context)) return Settings.canDrawOverlays(context);
         // The manager's enabled-service API can omit an approved service while
         // it is being rebound. Approval and live readiness are separate states.
         return BootRecovery.containsOwn(Settings.Secure.getString(context.getContentResolver(),
@@ -289,7 +321,7 @@ public final class BarService extends AccessibilityService {
     }
 
     private final Runnable longPress = () -> {
-        if (holdFired || moved || target == null || nativeMode(this)) return;
+        if (holdFired || moved || target == null || nativeNow()) return;
         holdFired = true;
         if (!maySearch()) { attemptBegin(this, LAST_BAR, StatusPolicy.CANCELLED, barInput(), searchBlocked()); return; }
         target.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);
@@ -297,7 +329,7 @@ public final class BarService extends AccessibilityService {
     };
 
     private String barInput() {
-        if (!nativeMode(this)) return "터치 영역 길게 누르기";
+        if (!nativeNow()) return "터치 영역 길게 누르기";
         return BarGesture.threeButton(this) ? "3버튼 홈 버튼 길게 누르기 (기기 로그)" : "ColorOS 기본 바 길게 누르기 (기기 로그)";
     }
 
@@ -481,6 +513,28 @@ public final class BarService extends AccessibilityService {
     private final Runnable autoRetry = () -> maybeAutoPrompt(true);
     private static final long LOG_CHECK_DELAY = 15_000, RETRY_NOTICE_GAP = 2_000;
 
+    /**
+     * A working session was lost (device: ColorOS game mode froze this app, logd dropped the frozen reader, and the drop
+     * showed only at the unfreeze, i.e. when the game was left). On an unlocked screen the approval prompt opens right
+     * away instead of waiting for the next unlock; the user still answers it. Own per-boot budget, apart from LOG_AUTO.
+     */
+    private static final String LOG_RECOVER = "log_recover";
+    private static final int RECOVER_MAX = 5;
+    private static final long RECOVER_DELAY = 1_500;
+    private final Runnable recoverPrompt = () -> {
+        SharedPreferences bar = prefs(this);
+        int boot = Settings.Global.getInt(getContentResolver(), Settings.Global.BOOT_COUNT, -1);
+        int used = bar.getInt(LOG_RECOVER + boot, 0);
+        if (instance != this || logs.state() != LogSession.OFF || !logsWanted(this) || !logsPermitted(this) || bridgeShowing()
+                || used >= RECOVER_MAX || !unlockedScreen()) {
+            Log.i("PadLog", "recover prompt skipped: state=" + logs.state() + " used=" + used);
+            return;
+        }
+        bar.edit().putInt(LOG_RECOVER + boot, used + 1).apply();
+        Log.i("PadLog", "session lost: recover prompt " + (used + 1) + "/" + RECOVER_MAX);
+        launchBridge(this);
+    };
+
     private final LogSession.Listener logEvents = new LogSession.Listener() {
         @Override public void stateChanged(boolean declined) {
             powerRequest++; // A session change cancels a power request from the old session.
@@ -501,10 +555,22 @@ public final class BarService extends AccessibilityService {
                 handler.removeCallbacks(logCheck);
                 handler.postDelayed(logCheck, DECLINE_COOLDOWN + RETRY_NOTICE_GAP);
             }
-            else if (logsWanted(BarService.this) && logWasActive && state == LogSession.OFF)
+            else if (logsWanted(BarService.this) && logWasActive && state == LogSession.OFF) {
                 Alerts.logMissing(BarService.this, true, "기기 로그 연결이 끊겼습니다", "ColorOS 기본 바·전원 버튼 실행이 멈췄습니다. 눌러서 다시 승인해주세요.");
+                handler.removeCallbacks(recoverPrompt);
+                if (fastRecover(BarService.this)) handler.postDelayed(recoverPrompt, RECOVER_DELAY);
+            }
+            // App switches arrive only through the session: without it, nothing would take the touch area away again.
+            if (state != LogSession.ACTIVE) touchApp = false;
             logWasActive = state == LogSession.ACTIVE;
             notifyState();
+        }
+        @Override public void foreground(boolean selected) {
+            boolean want = selected && touchAppsOn(BarService.this) && nativeMode(BarService.this);
+            if (want == touchApp) return;
+            touchApp = want;
+            Log.i("PadBar", "selected app in front=" + want);
+            configure();
         }
         @Override public void trigger(int kind) {
             if (kind == LogTrigger.ANY_KILL) { anyKill(); return; } // frequent and routine: not logged
@@ -610,7 +676,7 @@ public final class BarService extends AccessibilityService {
         // ignores every other tap. A confirmation asked before it ended up under it, so "허용 안 함" or a tap beside the
         // dialog seemed to freeze the tablet. The bridge also asks only while it has focus.
         long sinceConnect = SystemClock.elapsedRealtime() - connectedAt;
-        if (attempts == 0 && sinceConnect < GUIDE_SETTLE) {
+        if (bound && attempts == 0 && sinceConnect < GUIDE_SETTLE) {
             handler.removeCallbacks(bootPrompt);
             handler.postDelayed(bootPrompt, GUIDE_SETTLE - sinceConnect);
             Log.i("PadLog", "first prompt waits " + (GUIDE_SETTLE - sinceConnect) + " ms for the ColorOS accessibility warning");
@@ -662,6 +728,7 @@ public final class BarService extends AccessibilityService {
     @Override public void onCreate() {
         super.onCreate();
         windows = getSystemService(WindowManager.class);
+        appWindows = getApplicationContext().getSystemService(WindowManager.class);
         VoiceRepair.recover(this); // A voice rebind interrupted by process death restores the exact original selection.
         int systemUi;
         try { systemUi = getPackageManager().getApplicationInfo("com.android.systemui", 0).uid; }
@@ -688,9 +755,23 @@ public final class BarService extends AccessibilityService {
 
     @Override protected void onServiceConnected() {
         super.onServiceConnected();
+        bound = true;
+        detach(); // re-added as an accessibility overlay
+        prefs(this).edit().putBoolean(BootRecovery.APPROVED, true).apply();
+        begin();
+    }
+
+    /** Overlay mode: started by the settings screen or the boot receiver instead of the accessibility system. */
+    @Override public int onStartCommand(Intent intent, int flags, int startId) {
+        if (!overlayMode(this)) { if (!bound) stopSelf(); return START_NOT_STICKY; }
+        if (instance != this) begin(); else configure();
+        return START_STICKY;
+    }
+
+    private void begin() {
         instance = this;
         connectedAt = SystemClock.elapsedRealtime();
-        prefs(this).edit().putBoolean(BootRecovery.APPROVED, true).remove("native_bar").apply();
+        prefs(this).edit().remove("native_bar").apply();
         running = enabled(this);
         Alerts.scheduleUpdateCheck(this); // restores the job after a force-stop or reinstall cleared it
         // An option that reads device logs is on, but the one-time ADB grant is missing (reinstall, revoke).
@@ -702,9 +783,9 @@ public final class BarService extends AccessibilityService {
         maybeAutoPrompt();
     }
 
-    private void configure() {
+    private void unsubscribe() {
         AccessibilityServiceInfo info = getServiceInfo();
-        if (info == null) return;
+        if (info == null) return; // overlay mode: no accessibility connection
         // Touch events belong to our own overlay. No other apps' window events. Written only when it differs: every
         // setServiceInfo makes system_server recompute the whole accessibility state (device: 3x per screen off/on/unlock).
         if (info.eventTypes != 0 || info.packageNames != null || info.flags != 0) {
@@ -713,18 +794,26 @@ public final class BarService extends AccessibilityService {
             info.flags = 0;
             setServiceInfo(info);
         }
+    }
+
+    private void configure() {
+        if (bound) { unsubscribe(); unkeep(); } else keep();
         running = enabled(this);
         handler.removeCallbacks(restoreTarget);
         handler.removeCallbacks(longPress);
         if (!power(this)) powerRequest++; // Power option off: no delayed Gemini request survives.
         if (!logsWanted(this) || !logsPermitted(this)) logs.close();
+        boolean perApp = touchAppsOn(this) && nativeMode(this);
+        if (!perApp) touchApp = false;
+        logs.touchApps(perApp ? touchApps(this) : null);
         // The power key is handed over only while every press can be seen; any gap gives it back to the system.
-        if (PowerButton.wanted(doublePress(this), doubleTarget(this), instance == this && granted(this), BootRecovery.permitted(this),
+        // Screen off on a short press needs the accessibility global action: never handed over in overlay mode.
+        if (PowerButton.wanted(doublePress(this), doubleTarget(this), instance == this && bound && granted(this), BootRecovery.permitted(this),
                 logs.state() == LogSession.ACTIVE)) {
             if (!PowerButton.apply(this)) Log.w("PadPowerKeys", "power key settings not applied");
         } else PowerButton.restore(this);
         if (!enabled(this)) detach();
-        else if (nativeMode(this)) {
+        else if (nativeNow()) {
             detach();
             // The OEM gesture is on only while the session genuinely receives system logs; otherwise the original is restored.
             if (maySearch() && BootRecovery.permitted(this) && LogSession.breenoDisabled(this) && logs.state() == LogSession.ACTIVE)
@@ -737,7 +826,7 @@ public final class BarService extends AccessibilityService {
 
     private final Runnable restoreTarget = new Runnable() {
         @Override public void run() {
-            if (instance != BarService.this || !enabled(BarService.this) || nativeMode(BarService.this)) return;
+            if (instance != BarService.this || !enabled(BarService.this) || nativeNow()) return;
             attach();
             // Screen-on can arrive before unlock finishes. Retry only this transition.
             if ((target == null || !target.isAttachedToWindow()) && ++attachAttempts < 10
@@ -754,7 +843,7 @@ public final class BarService extends AccessibilityService {
 
     private void attach() {
         if (target != null && !target.isAttachedToWindow()) detach();
-        if (!enabled(this) || nativeMode(this) || !granted(this) || instance != this || !unlockedScreen()) return;
+        if (!enabled(this) || nativeNow() || !granted(this) || instance != this || !unlockedScreen()) return;
         if (target != null) { BarGesture.disableBreenoGesture(this); return; }
         View view = new View(this);
         view.setContentDescription("Circle-to-Search Trigger 길게 누르기 영역");
@@ -788,7 +877,7 @@ public final class BarService extends AccessibilityService {
             return true;
         });
         try {
-            windows.addView(view, areaParams());
+            (bound ? windows : appWindows).addView(view, areaParams());
             target = view;
             BarGesture.disableBreenoGesture(this);
             updateAppearance();
@@ -817,9 +906,11 @@ public final class BarService extends AccessibilityService {
         handler.removeCallbacks(autoRetry);
         handler.removeCallbacks(bootPrompt);
         handler.removeCallbacks(unlockWatch);
+        handler.removeCallbacks(recoverPrompt);
         running = false;
         cancelPending();
         detach();
+        unkeep();
         logs.close();
         PowerButton.restore(this); // No reader, no screen-off from this app: the system short press comes back first.
         if (nativeMode(this)) BarGesture.restore(this); // No reader while unbound; reapplied after the next approved session.
@@ -829,9 +920,50 @@ public final class BarService extends AccessibilityService {
     }
 
     @Override public boolean onUnbind(Intent intent) {
+        bound = false;
+        // Overlay mode keeps running as a started service: the touch area comes back as an app overlay.
+        if (overlayMode(this) && instance == this) {
+            handler.post(() -> { detach(); configure(); });
+            return super.onUnbind(intent);
+        }
         String approved = Settings.Secure.getString(getContentResolver(), Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES);
         if (!BootRecovery.containsOwn(approved)) BarGesture.restore(this);
         return super.onUnbind(intent);
+    }
+
+    /**
+     * Overlay mode: a 1x1 transparent, untouchable overlay. Device: with "다른 앱 위에 표시", a background start (approval
+     * prompt, other target apps) is let through only while an overlay of this app is visible, and the process stays
+     * perceptible (adj 200). Needed in the ColorOS-bar and power-only setups, which have no touch area.
+     */
+    private View keeper;
+
+    private void keep() {
+        if (keeper != null || !Settings.canDrawOverlays(this)) return;
+        WindowManager.LayoutParams p = new WindowManager.LayoutParams(1, 1, WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+                | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN, PixelFormat.TRANSLUCENT);
+        p.gravity = Gravity.TOP | Gravity.LEFT;
+        p.setTitle("PadKeeper");
+        View view = new View(this);
+        try { appWindows.addView(view, p); keeper = view; }
+        catch (RuntimeException error) { Log.w("PadBar", "keeper overlay unavailable", error); }
+    }
+
+    private void unkeep() {
+        if (keeper == null) return;
+        try { appWindows.removeViewImmediate(keeper); } catch (IllegalArgumentException ignored) { }
+        keeper = null;
+    }
+
+    /**
+     * The recents screen, opened only from the user's tap on "지금 잠그기" so the card can be locked there. ColorOS keeps
+     * the recents lock list behind a signature permission (device: oplus.permission.OPLUS_COMPONENT_SAFE for both reading
+     * and writing it), so the app can only lead the user to it. false without accessibility (overlay mode).
+     */
+    static boolean openRecents() {
+        BarService service = instance;
+        return service != null && service.bound && service.performGlobalAction(GLOBAL_ACTION_RECENTS);
     }
 
     @Override public void onAccessibilityEvent(AccessibilityEvent event) { }

@@ -115,6 +115,14 @@ public final class LogTriggerHarness {
             check(TouchArea.typed(bad, true) == null, "Rejected input: " + (bad == null ? "null" : bad.codePoints().mapToObj(Integer::toHexString).toList()));
         check(TouchArea.typed("99999", false) == 99999 && TouchArea.typed("-9999", true) == -9999, "Longest allowed input parses without overflow");
         check(TouchArea.MAX_TYPED == 5 && String.valueOf(-1133).length() <= TouchArea.MAX_TYPED, "Every in-range value fits the length limit");
+        // Animation scale (0.00 to 10.00, two decimals at most), returned in hundredths.
+        String[] goodScales = {"0", "0.00", "0.0", ".5", "5.", "0.87", "1", "1.00", " 2.5 ", "09.99", "10", "10.0", "10.00"};
+        int[] goodHundredths = {0, 0, 0, 50, 500, 87, 100, 100, 250, 999, 1000, 1000, 1000};
+        for (int i = 0; i < goodScales.length; i++)
+            check(Integer.valueOf(goodHundredths[i]).equals(TouchArea.typedScale(goodScales[i])), "Scale parses: " + goodScales[i]);
+        for (String bad : new String[]{null, "", " ", ".", "..", "1..2", "1.2.3", "-1", "-0", "+1", "10.01", "10.1", "11", "99", "100",
+                "0.001", "1.234", "1,5", "1e1", "0x1", "NaN", "Infinity", "1 2", "１", "١", "²", "1\u0000", "abc", "1.5x"})
+            check(TouchArea.typedScale(bad) == null, "Scale rejected: " + (bad == null ? "null" : bad.codePoints().mapToObj(Integer::toHexString).toList()));
         check(TouchArea.MIN_HOLD == 50 && TouchArea.hold(10) == 50 && TouchArea.hold(-5) == 50 && TouchArea.hold(50) == 50
             && TouchArea.hold(5000) == TouchArea.MAX_HOLD && TouchArea.hold(420) == 420, "Hold time is bounded (50-1000 ms)");
         check(TouchArea.settle(-1) == 0 && TouchArea.settle(99999) == TouchArea.MAX_SETTLE, "Gemini wait is bounded");
@@ -198,6 +206,15 @@ public final class LogTriggerHarness {
         check(kind(system(W, AM, breeno(1000, 0))) == LogTrigger.HOME, "Caller 1000 (3-button home long press or power tail) is HOME, never BAR");
         check(kind(entry(3, APP, TIME, W, AM, breeno(1000, 0))) == LogTrigger.NONE && kind(entry(0, 1000, TIME, W, AM, breeno(1000, 0))) == LogTrigger.NONE,
             "A forged or non-system-buffer caller-1000 line is rejected");
+        java.util.Set<String> games = java.util.Collections.singleton("com.droiddeck.launcher");
+        String resumedGame = "NFW_setLastResumedActivityUncheckLocked:true r:ActivityRecord{59538254 u0 com.droiddeck.launcher/.MainActivity t274}";
+        byte[] gameLine = system(4, "ActivityTaskManager", resumedGame);
+        check(LogTrigger.foreground(gameLine, gameLine.length, 0, games) == LogTrigger.SELECTED_APP, "Selected app resumed");
+        byte[] homeLine = system(3, "ActivityTaskManager", resumedGame.replace("com.droiddeck.launcher/.MainActivity", "com.android.launcher/.Launcher"));
+        check(LogTrigger.foreground(homeLine, homeLine.length, 0, games) == LogTrigger.OTHER_APP, "Other app resumed");
+        byte[] forgedLine = entry(3, APP, TIME, 4, "ActivityTaskManager", resumedGame);
+        check(LogTrigger.foreground(forgedLine, forgedLine.length, 0, games) == -1, "An app writing a resumed line is ignored");
+        check(LogTrigger.foreground(gameLine, gameLine.length, 10, games) == -1, "Another user's resumed line is ignored");
         check(kind(system(W, AM, breeno(1000, 10))) == LogTrigger.NONE && kind(system(I, AM, breeno(1000, 0))) == LogTrigger.NONE,
             "Caller-1000 lines keep the user and priority rules");
         check(kind(system(W, AM, breeno(999, 0))) == LogTrigger.NONE && kind(system(W, AM, breeno(0, 0))) == LogTrigger.NONE, "Other low callers are rejected");
@@ -425,12 +442,12 @@ public final class LogTriggerHarness {
         // Taskbar OFF/unknown (anything but exactly "1", incl. unreadable null) keeps the old gesture-bar rules.
         for (String taskbarOff : new String[]{null, "0", "", "2", " 1", "1 ", "true", "01"}) {
             check(StatusPolicy.gestureBar("0", taskbarOff) == SHOWN && StatusPolicy.gestureBar("1", taskbarOff) == HIDDEN,
-                "navbar_gesture_visibility: 0 shown, 1 hidden with taskbar " + taskbarOff);
+                "gesture_side_hide_bar_prevention_enable: 0 shown, 1 hidden with taskbar " + taskbarOff);
             for (String raw : new String[]{null, "", "2", "-1", " 1", "1 ", "true", "01"})
-                check(StatusPolicy.gestureBar(raw, taskbarOff) == UNKNOWN, "Missing/unrecognized navbar_gesture_visibility is unknown: " + raw + "/" + taskbarOff);
+                check(StatusPolicy.gestureBar(raw, taskbarOff) == UNKNOWN, "Missing/unrecognized gesture_side_hide_bar_prevention_enable is unknown: " + raw + "/" + taskbarOff);
         }
         for (String raw : new String[]{"0", "1", null, "2"})
-            check(StatusPolicy.gestureBar(raw, "1") == TASKBAR, "Taskbar ON: the launcher bar reports the hold whatever navbar_gesture_visibility is: " + raw);
+            check(StatusPolicy.gestureBar(raw, "1") == TASKBAR, "Taskbar ON: the launcher bar reports the hold whatever gesture_side_hide_bar_prevention_enable is: " + raw);
         String taskbarHidden = StatusPolicy.bar(true, true, true, true, true, true, true, true, false, true, true, OK, StatusPolicy.gestureBar("1", "1"));
         check(taskbarHidden.startsWith("사용 중 · ColorOS 기본 바 감지 중") && taskbarHidden.contains("작업 표시줄") && !taskbarHidden.contains("숨기기"),
             "Taskbar ON + hidden gesture bar is normal, no hide error: " + taskbarHidden);
@@ -444,16 +461,16 @@ public final class LogTriggerHarness {
         check(buttonsReady.startsWith("사용 중 · 3버튼 홈 버튼 감지 중") && !buttonsReady.contains("제스처 안내 막대"), "3-button native mode reports the home button: " + buttonsReady);
         String buttonsTouch = StatusPolicy.bar(true, true, true, false, true, true, true, true, false, true, true, OK, BUTTONS);
         check(buttonsTouch.contains("최근 앱 버튼") && buttonsTouch.startsWith("사용 중 · 터치 영역"), "3-button touch mode warns about the recents button: " + buttonsTouch);
-        check(StatusPolicy.bar(true, true, true, true, true, true, true, true, false, true, true, OK, StatusPolicy.gestureBar(null, null)).contains("제스처 안내 막대 표시 여부 확인 불가"),
+        check(StatusPolicy.bar(true, true, true, true, true, true, true, true, false, true, true, OK, StatusPolicy.gestureBar(null, null)).contains("제스처 안내 막대가 보이는지 확인할 수 없습니다"),
             "Unreadable gesture bar and taskbar stay unverified");
         check(StatusPolicy.bar(true, true, true, true, false, true, true, true, false, true, true, OK, TASKBAR).contains("보안 설정 쓰기 권한 필요"),
             "Taskbar ON still requires the native prerequisites");
         String hidden = StatusPolicy.bar(true, true, true, true, true, true, true, true, false, true, true, OK, HIDDEN);
-        check(hidden.equals("오류 · 제스처 안내 막대 숨기기가 켜져 있습니다. 설정 → 시스템 및 업데이트 → 시스템 탐색에서 끄세요"), "Hidden gesture bar names the ColorOS setting: " + hidden);
+        check(hidden.equals("오류 · 제스처 안내 막대 숨기기가 켜져 있습니다.\n설정 → 시스템 및 업데이트 → 시스템 탐색에서 꺼주세요"), "Hidden gesture bar names the ColorOS setting: " + hidden);
         check(StatusPolicy.bar(true, true, true, true, false, false, false, false, false, false, true, NONE, HIDDEN).startsWith("오류"), "Hidden gesture bar is reported before other native prerequisites");
         check(StatusPolicy.bar(true, false, true, true, true, true, true, true, false, true, true, OK, HIDDEN).equals("꺼짐"), "Hidden gesture bar is no error while the trigger is off");
         String unknown = StatusPolicy.bar(true, true, true, true, true, true, true, true, false, true, true, OK, UNKNOWN);
-        check(!unknown.startsWith("사용 중") && !unknown.startsWith("오류") && unknown.contains("확인 불가") && unknown.contains("제스처 안내 막대"), "Unknown gesture bar is unverified, not normal: " + unknown);
+        check(!unknown.startsWith("사용 중") && !unknown.startsWith("오류") && unknown.contains("확인할 수 없습니다") && unknown.contains("제스처 안내 막대"), "Unknown gesture bar is unverified, not normal: " + unknown);
         check(StatusPolicy.bar(true, true, true, true, true, true, true, true, false, true, true, OK, SHOWN).startsWith("사용 중 · ColorOS 기본 바 감지 중"), "Shown gesture bar keeps the normal native status");
         for (int visibility : new int[]{SHOWN, HIDDEN, UNKNOWN, TASKBAR})
             check(StatusPolicy.bar(true, true, true, false, true, true, true, true, false, true, true, OK, visibility).startsWith("사용 중 · 터치 영역"), "Touch area stays in use with gesture bar " + visibility);

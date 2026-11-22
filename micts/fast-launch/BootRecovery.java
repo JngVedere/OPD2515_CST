@@ -26,6 +26,16 @@ final class BootRecovery {
         return services + (services.endsWith(":") ? "" : ":") + SERVICE;
     }
 
+    /** The list without this service (experimental overlay mode); unchanged when it was not in it. */
+    static String withoutOwn(String services) {
+        if (!containsOwn(services)) return services;
+        StringBuilder kept = new StringBuilder();
+        for (String entry : services.split(":"))
+            if (!entry.isEmpty() && !SERVICE.equals(entry) && !SHORT_SERVICE.equals(entry))
+                kept.append(kept.length() == 0 ? "" : ":").append(entry);
+        return kept.toString();
+    }
+
     static boolean permitted(Context context) {
         return context.checkSelfPermission(Manifest.permission.WRITE_SECURE_SETTINGS)
             == PackageManager.PERMISSION_GRANTED;

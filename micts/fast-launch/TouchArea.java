@@ -39,6 +39,26 @@ final class TouchArea {
      * A value typed into the settings dialog: only ASCII digits, with one leading '-' when signed. Anything else
      * (other scripts' digits, '+', spaces inside, decimals, empty, too long) is null. The caller still range-checks.
      */
+    /**
+     * 애니메이션 배율 typed in the settings dialog: 0.00 to 10.00, ASCII digits with at most one '.' and two decimals,
+     * at least one digit; spaces around it are ignored. Anything else is null. Returns hundredths (0 to 1000).
+     */
+    static Integer typedScale(String text) {
+        if (text == null) return null;
+        int from = 0, to = text.length();
+        while (from < to && text.charAt(from) == ' ') from++;
+        while (to > from && text.charAt(to - 1) == ' ') to--;
+        String value = text.substring(from, to);
+        if (value.isEmpty() || value.length() > 5) return null;
+        int dot = value.indexOf('.');
+        String whole = dot < 0 ? value : value.substring(0, dot), fraction = dot < 0 ? "" : value.substring(dot + 1);
+        if (whole.length() > 2 || fraction.length() > 2 || whole.length() + fraction.length() == 0) return null;
+        for (char c : (whole + fraction).toCharArray()) if (c < '0' || c > '9') return null;
+        int hundredths = (whole.isEmpty() ? 0 : Integer.parseInt(whole)) * 100
+            + (fraction.isEmpty() ? 0 : Integer.parseInt(fraction) * (fraction.length() == 1 ? 10 : 1));
+        return hundredths <= 1000 ? hundredths : null;
+    }
+
     static Integer typed(String text, boolean signed) {
         if (text == null) return null;
         // Only ordinary spaces around the number are ignored (String.trim would also drop control characters).

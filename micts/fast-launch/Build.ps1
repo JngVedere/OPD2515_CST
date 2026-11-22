@@ -72,9 +72,9 @@ if ($launchable.Count -gt 0 -or
 }
 # READ_LOGS is granted once over ADB; INTERNET/REQUEST_INSTALL_PACKAGES serve only the update check (AppUpdate);
 # POST_NOTIFICATIONS only the optional alerts (Alerts, off by default).
-# No foreground-service or overlay permission is allowed.
+# SYSTEM_ALERT_WINDOW only for the experimental overlay mode (off by default). No foreground-service permission.
 $allowed = @('android.permission.RECEIVE_BOOT_COMPLETED','android.permission.WRITE_SECURE_SETTINGS','android.permission.READ_LOGS',
-    'android.permission.INTERNET','android.permission.REQUEST_INSTALL_PACKAGES','android.permission.POST_NOTIFICATIONS','android.permission.POST_PROMOTED_NOTIFICATIONS')
+    'android.permission.INTERNET','android.permission.REQUEST_INSTALL_PACKAGES','android.permission.POST_NOTIFICATIONS','android.permission.POST_PROMOTED_NOTIFICATIONS','android.permission.SYSTEM_ALERT_WINDOW')
 foreach ($line in $metadata) {
     if ($line -match "^uses-permission(?:-sdk-\d+)?: name='([^']+)'") {
         if ($Matches[1] -notin $allowed) { throw "Unexpected permission: $($Matches[1])" }

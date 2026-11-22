@@ -130,6 +130,31 @@ final class LogTrigger {
             && message.indexOf("procName=") > 0 && message.indexOf("procName=") == message.lastIndexOf("procName=");
     }
 
+    /**
+     * 일부 앱에서 하단 영역 인식 강제 사용: the app ColorOS resumes. Observed OPD2515 (system_server, system buffer, every app
+     * switch including Home): "NFW_setLastResumedActivityUncheckLocked:true r:ActivityRecord{<id> u<user> <pkg>/<class> ...".
+     * Only whether that app is in apps leaves this class: SELECTED_APP, OTHER_APP, or -1 for any other entry.
+     */
+    static final int OTHER_APP = 0, SELECTED_APP = 1;
+    private static final byte[] TASK_TAG = ascii("ActivityTaskManager"), RESUMED_PREFIX = ascii("NFW_setLastResumedActivityUncheckLocked:true r:ActivityRecord{");
+    private static final Pattern RESUMED = Pattern.compile("NFW_setLastResumedActivityUncheckLocked:true r:ActivityRecord\\{[0-9a-f]{1,16} u(\\d{1,6}) ([A-Za-z0-9_.]{1,255})/");
+
+    static int foreground(byte[] p, int n, int user, java.util.Set<String> apps) {
+        if (!valid(p, n) || i32(p, 24) != SYSTEM_UID || i32(p, 20) != SYSTEM_LOG) return -1;
+        int hdr = u16(p, 2), end = hdr + u16(p, 0), tag = hdr + 1, tagEnd = zero(p, tag, end);
+        if (tagEnd >= end || !same(p, tag, tagEnd, TASK_TAG)) return -1;
+        int message = tagEnd + 1, messageEnd = zero(p, message, end);
+        if (messageEnd - message > 1024 || !starts(p, message, messageEnd, RESUMED_PREFIX)) return -1;
+        return resumed(new String(p, message, messageEnd - message, StandardCharsets.US_ASCII), user, apps);
+    }
+
+    static int resumed(String message, int user, java.util.Set<String> apps) {
+        Matcher line = RESUMED.matcher(message);
+        try { if (!line.lookingAt() || Integer.parseInt(line.group(1)) != user) return -1; }
+        catch (NumberFormatException invalid) { return -1; }
+        return apps.contains(line.group(2)) ? SELECTED_APP : OTHER_APP;
+    }
+
     private static int zero(byte[] p, int from, int end) {
         for (int i = from; i < end; i++) if (p[i] == 0) return i;
         return end;

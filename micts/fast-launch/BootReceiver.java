@@ -19,6 +19,12 @@ public final class BootReceiver extends BroadcastReceiver {
             BootRecovery.captureBeforeUnlock(context);
             return;
         }
+        // Overlay mode (experimental): no accessibility to restore; the service is started directly.
+        if (Intent.ACTION_BOOT_COMPLETED.equals(intent.getAction()) && BarService.overlayMode(context)) {
+            try { context.startService(new Intent(context, BarService.class)); }
+            catch (RuntimeException refused) { Log.w("PadBoot", "overlay mode start refused", refused); }
+            return;
+        }
         if (!Intent.ACTION_BOOT_COMPLETED.equals(intent.getAction()) || !BootRecovery.eligible(context)) return;
         Context app = context.getApplicationContext();
         PendingResult pending = goAsync();

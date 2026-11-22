@@ -682,12 +682,12 @@ if (-not $bridge -or $bridge.GetAttribute('exported',$namespaces.LookupNamespace
 }
 $securityChecks++
 $permissions = @($manifest.SelectNodes('/manifest/uses-permission',$namespaces) | ForEach-Object { $_.GetAttribute('name',$namespaces.LookupNamespace('android')) } | Sort-Object)
-if (($permissions -join ',') -cne 'android.permission.INTERNET,android.permission.POST_NOTIFICATIONS,android.permission.POST_PROMOTED_NOTIFICATIONS,android.permission.READ_LOGS,android.permission.RECEIVE_BOOT_COMPLETED,android.permission.REQUEST_INSTALL_PACKAGES,android.permission.WRITE_SECURE_SETTINGS') {
+if (($permissions -join ',') -cne 'android.permission.INTERNET,android.permission.POST_NOTIFICATIONS,android.permission.POST_PROMOTED_NOTIFICATIONS,android.permission.READ_LOGS,android.permission.RECEIVE_BOOT_COMPLETED,android.permission.REQUEST_INSTALL_PACKAGES,android.permission.SYSTEM_ALERT_WINDOW,android.permission.WRITE_SECURE_SETTINGS') {
     throw ('Unexpected permission set: ' + ($permissions -join ','))
 }
 $securityChecks++
-if ($manifest.OuterXml -match 'foregroundServiceType|FOREGROUND_SERVICE|SYSTEM_ALERT_WINDOW|android:process=') {
-    throw 'Log session must stay in the accessibility service: no foreground service, overlay or extra process'
+if ($manifest.OuterXml -match 'foregroundServiceType|FOREGROUND_SERVICE|android:process=') {
+    throw 'Log session must stay in BarService: no foreground service or extra process'
 }
 $securityChecks++
 $appFolder = Join-Path $PSScriptRoot 'micts/fast-launch'
@@ -779,19 +779,24 @@ $securityChecks++
 # Power double press: the only global action is the screen-off for a logged single press while our power-key settings are
 # applied; the two power_button_* settings are written only by PowerButton (journal, exact restore).
 $allowedLock = 'performGlobalAction(GLOBAL_ACTION_LOCK_SCREEN)'
+# Second and last global action: the recents screen, only from openRecents (the user's tap on "지금 잠그기").
+$allowedRecents = 'service.performGlobalAction(GLOBAL_ACTION_RECENTS)'
 $joinedSources = $allSources.Values -join "`n"
-if (([regex]::Matches($joinedSources, 'performGlobalAction\(')).Count -ne 1 -or
+if (([regex]::Matches($joinedSources, 'performGlobalAction\(')).Count -ne 2 -or
+    ([regex]::Matches($joinedSources, [regex]::Escape($allowedRecents))).Count -ne 1 -or
+    $service -notmatch ('(?s)static boolean openRecents\(\) \{\s*BarService service = instance;\s*return service != null && service\.bound && ' + [regex]::Escape($allowedRecents) + ';\s*\}') -or
+    ([regex]::Matches($joinedSources, 'BarService\.openRecents\(')).Count -ne 1 -or
     ([regex]::Matches($service, [regex]::Escape($allowedLock))).Count -ne 1 -or
     $service -notmatch ('(?s)private void singlePress\(\) \{\s*if \(!PowerButton\.applied\(this\) \|\| !getSystemService\(PowerManager\.class\)\.isInteractive\(\)\) return;\s*if \(' + [regex]::Escape($allowedLock) + '\) return;' + $method + 'PowerButton\.restore\(this\);') -or
     @($allSources.Keys | Where-Object { $allSources[$_] -match 'power_button_' }) -join ',' -cne 'PowerButton.java' -or
     (@($allSources.Keys | Where-Object { $allSources[$_] -match 'Settings\.Global\.put' } | Sort-Object) -join ',') -cne 'PowerButton.java,Tweaks.java' -or
-    $service -notmatch '(?s)if \(PowerButton\.wanted\(doublePress\(this\), doubleTarget\(this\), instance == this && granted\(this\), BootRecovery\.permitted\(this\),\s*logs\.state\(\) == LogSession\.ACTIVE\)\) \{' + $method + '\} else PowerButton\.restore\(this\);' -or
+    $service -notmatch '(?s)if \(PowerButton\.wanted\(doublePress\(this\), doubleTarget\(this\), instance == this && bound && granted\(this\), BootRecovery\.permitted\(this\),\s*logs\.state\(\) == LogSession\.ACTIVE\)\) \{' + $method + '\} else PowerButton\.restore\(this\);' -or
     $service -notmatch '(?s)logs\.close\(\);\s*PowerButton\.restore\(this\);' -or
     $allSources['BootReceiver.java'] -notmatch '(?s)LOCKED_BOOT_COMPLETED\.equals\(intent\.getAction\(\)\)\) \{' + $method + 'PowerButton\.restore\(context\);' -or
     $service -notmatch 'static boolean doublePress\(Context context\) \{ return prefs\(context\)\.getBoolean\(POWER_DOUBLE, false\); \}') {
     throw 'Power double press: one screen-off action, power_button_* written only by PowerButton, applied only with a live session and restored on every gap'
 }
-$allowedSources = $joinedSources.Replace($allowedLock, '')
+$allowedSources = $joinedSources.Replace($allowedLock, '').Replace($allowedRecents, '')
 $securityChecks++
 # One screen policy for press, late finish and GeminiSession: LogTrigger.powerLaunch/powerScreen; locked requests are gesture-only (no assist data/screenshot).
 $gemini = $allSources['GeminiSession.java']
@@ -849,15 +854,16 @@ if ($alerts -cmatch 'startForeground|FOREGROUND_SERVICE|AlarmManager|WorkManager
 }
 $securityChecks++
 # Optional tweaks (설정 → 고급 → 편의 기능): every settings key the class names is on this list; secure writes go through
-# setSecure's own three-key allowlist. No System writes or provider calls anywhere, no shell, no package or component changes.
+# setSecure's own four-key allowlist. No System writes or provider calls anywhere, no shell, no package or component changes.
 $tweaks = $allSources['Tweaks.java']
 $tweakKeys = @([regex]::Matches($tweaks, '"([a-z_]+)"') | ForEach-Object { $_.Groups[1].Value } | Where-Object { $_ -match '_' } | Sort-Object -Unique)
-$allowedTweakKeys = @('bluetooth_name','clock_seconds','device_name','device_tether_name','reduce_bright_colors_activated','revise_device_name',
-    'show_rotation_suggestions','tweak_state_')
+# color_display is the system service name the 딥 다크 모드 tile reads its state from, not a settings key.
+$allowedTweakKeys = @('animator_duration_scale','bluetooth_name','clock_seconds','color_display','development_settings_enabled','device_name','device_tether_name','oplus_customize_screen_refresh_rate','reduce_bright_colors_activated','revise_device_name',
+    'show_rotation_suggestions','system_opt_enable','transition_animation_scale','tweak_state_','window_animation_scale')
 if (($tweakKeys -join ',') -cne ($allowedTweakKeys -join ',') -or
     @($allSources.Keys | Where-Object { $allSources[$_] -match 'Settings\.System\.put|\.call\(' }).Count -ne 0 -or
     $tweaks -cmatch 'Runtime\.getRuntime|ProcessBuilder|setComponentEnabledSetting|setApplicationEnabledSetting' -or
-    $tweaks -notmatch 'if \(!EXTRA_DIM\.equals\(key\) && !ROTATION_SUGGESTIONS\.equals\(key\) && !CLOCK_SECONDS\.equals\(key\)\) return false;') {
+    $tweaks -notmatch 'if \(!EXTRA_DIM\.equals\(key\) && !ROTATION_SUGGESTIONS\.equals\(key\) && !CLOCK_SECONDS\.equals\(key\) && !SYSTEM_OPT\.equals\(key\)\) return false;') {
     throw 'Tweaks: fixed settings key list, no System writes, no shell or package/component changes'
 }
 $securityChecks++
@@ -925,7 +931,7 @@ $androidNs = $namespaces.LookupNamespace('android')
 $exported = @($manifest.SelectNodes('/manifest/application/*',$namespaces) | Where-Object { $_.GetAttribute('exported',$androidNs) -eq 'true' } |
     ForEach-Object { $_.GetAttribute('name',$androidNs) + '|' + $_.GetAttribute('permission',$androidNs) } | Sort-Object)
 $expectedExported = @('.BarService|android.permission.BIND_ACCESSIBILITY_SERVICE', '.BarTile|android.permission.BIND_QUICK_SETTINGS_TILE',
-    '.DrawerLaunch|', '.LaunchTile$Assistant|android.permission.BIND_QUICK_SETTINGS_TILE', '.LaunchTile$Search|android.permission.BIND_QUICK_SETTINGS_TILE',
+    '.DimTile|android.permission.BIND_QUICK_SETTINGS_TILE', '.DrawerLaunch|', '.LaunchTile$Assistant|android.permission.BIND_QUICK_SETTINGS_TILE', '.LaunchTile$Search|android.permission.BIND_QUICK_SETTINGS_TILE',
     '.SetupActivity|', '.SetupCommandActivity|android.permission.DUMP') | Sort-Object
 $drawerAlias = $manifest.SelectSingleNode('/manifest/application/activity-alias[@android:name=".DrawerLaunch"]',$namespaces)
 $mainSource = $allSources['MainActivity.java']
@@ -960,6 +966,16 @@ if ($barService -match 'TYPE_WINDOW_|TYPE_VIEW_|com\.heytap\.speechassist|com\.c
     throw 'Touch-area service must keep eventTypes 0, packageNames null and flags 0, with an empty event handler'
 }
 $securityChecks++
+# Experimental overlay mode: app overlays exist only in BarService, only without the accessibility binding (bound false),
+# and the 1x1 keeper never takes touches. The power keys are never handed over in that mode.
+if ((@($allSources.Keys | Where-Object { $allSources[$_] -match 'TYPE_APPLICATION_OVERLAY' }) -join ',') -cne 'BarService.java' -or
+    $barService -notmatch 'bound \? WindowManager\.LayoutParams\.TYPE_ACCESSIBILITY_OVERLAY : WindowManager\.LayoutParams\.TYPE_APPLICATION_OVERLAY' -or
+    $barService -notmatch '(?s)private void keep\(\) \{.*?FLAG_NOT_TOUCHABLE.*?\}' -or
+    $barService -notmatch 'if \(bound\) \{ unsubscribe\(\); unkeep\(\); \} else keep\(\);' -or
+    $barService -notmatch 'if \(overlayMode\(context\)\) return Settings\.canDrawOverlays\(context\);') {
+    throw 'Overlay mode: app overlays only in BarService without accessibility, untouchable keeper, overlay permission as the grant'
+}
+$securityChecks++
 # Retired boot auto-Allow: no consent state, node/window reading, clicks or approval history anywhere.
 if (Test-Path -LiteralPath (Join-Path $appFolder 'BootConsent.java')) { throw 'Retired boot auto-Allow source must be deleted' }
 if ($allowedSources -match 'BootConsent|performAction|ACTION_CLICK|AccessibilityNodeInfo|AccessibilityWindowInfo|getWindows\(|getRootInActiveWindow|findAccessibilityNodeInfos|getSource\(|log_approved_boot|LOG_APPROVED|bootCompleted|AutoApproval|autoBridge|autoSession|dispatchGesture|takeScreenshot|getBoundsIn|performGlobalAction|ACTION_SET_TEXT') {
@@ -969,7 +985,7 @@ $securityChecks++
 # The log-access confirmation is always answered by the user: manual requests and the first-unlock prompt only open it.
 if ($barService -notmatch 'static void requestApproval\(Context context\) \{\s*prefs\(context\)\.edit\(\)\.putBoolean\(LOG_DECLINED, false\)\.apply\(\);\s*launchBridge\(context\);\s*\}' -or
     $barService -notmatch 'bar\.edit\(\)\.putInt\(LOG_AUTO, attempts \+ 1\)\.apply\(\);\s*launchBridge\(this\);\s*\}' -or
-    $allSources['BootReceiver.java'] -match 'BarService\.') {
+    $allSources['BootReceiver.java'] -match 'BarService\.(?!overlayMode\(context\)|class\))') {
     throw 'Manual and first-unlock log approval prompts must only be shown, never answered by the app'
 }
 $securityChecks++

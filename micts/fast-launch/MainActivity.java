@@ -124,7 +124,7 @@ public final class MainActivity extends Activity {
         // Fallback: the direct call was refused (Google not selected, screen locked, or the hidden call unavailable).
         if (!micTsInstalled()) {
             record(StatusPolicy.FAILED, "서클 투 서치를 열 수 없음 · Google 앱이 기본 디지털 어시스턴트인지 확인");
-            Toast.makeText(this, "서클 투 서치를 열지 못했습니다. 기본 디지털 어시스턴트가 Google인지 확인해주세요.", Toast.LENGTH_LONG).show();
+            Toast.makeText(this, "서클 투 서치를 열지 못했습니다.\n기본 디지털 어시스턴트가\nGoogle인지 확인해주세요.", Toast.LENGTH_LONG).show();
             finish();
             return;
         }
