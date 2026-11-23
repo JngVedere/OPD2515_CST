@@ -133,7 +133,34 @@ final class LogSession {
         listener.stateChanged(false);
     }
 
-    private void activationTimeout(long session) { decline(session, "activation-timeout"); }
+    /**
+     * The session whose confirmation is on screen and not yet answered. Device: answered after the 35 s timeout (common
+     * after a reboot, when the user looks at the tablet later), "일회성 액세스 허용" approved a connection this app had
+     * already closed, so nothing worked until a new approval from the settings screen. While the confirmation is open
+     * the timeout waits for the answer, up to DIALOG_WAIT.
+     */
+    private long shownSession = -1, shownAt;
+    static final long DIALOG_WAIT = 10 * 60_000, DIALOG_RECHECK = 5_000;
+
+    /** The bridge was stopped: the wait for an answer ends, the normal activation timeout applies again. */
+    synchronized void dialogGone() { shownSession = -1; }
+
+    /** The bridge lost focus right after asking: Android's confirmation is on screen. */
+    synchronized void dialogShown() {
+        if (state != CONNECTING) return;
+        shownSession = generation;
+        shownAt = android.os.SystemClock.elapsedRealtime();
+    }
+
+    private void activationTimeout(long session) {
+        synchronized (this) {
+            if (session == shownSession && android.os.SystemClock.elapsedRealtime() - shownAt < DIALOG_WAIT) {
+                handler.postDelayed(() -> activationTimeout(session), DIALOG_RECHECK);
+                return;
+            }
+        }
+        decline(session, "activation-timeout");
+    }
 
     /** After the confirmation closed, an approval shows within this (device: the first system entry ~5 ms after Allow). */
     static final long ANSWER_GRACE = 1500;
@@ -144,6 +171,7 @@ final class LogSession {
      */
     synchronized void answered() {
         long session = generation;
+        shownSession = -1;
         if (state == CONNECTING) handler.postDelayed(() -> decline(session, "not-approved"), ANSWER_GRACE);
     }
 

@@ -38,7 +38,7 @@ public final class RecoveryHarness {
         check(!BarGesture.releaseShouldTrigger(1000, 350, false, true));
         check(BarGesture.releaseShouldTrigger(200, 200, false, false) && !BarGesture.releaseShouldTrigger(999, 1000, false, false)); // user hold time
         check(VoiceRepair.UNBOUND_MS + TouchArea.MAX_SETTLE + 1000 < LogTrigger.POWER_LAUNCH_AGE); // longest wait still reaches Gemini
-        check(VoiceRepair.SETTLE_MS == 15 && TouchArea.HOLD == 195); // defaults (user decisions: wait 0.3.5, hold 0.3.10)
+        check(VoiceRepair.SETTLE_MS == 20 && TouchArea.HOLD == 195); // defaults (user decisions: wait 0.3.5, hold 0.3.10)
         check(BootRecovery.autoStartMissed(32, 31, 1000, 2000));   // captured last boot only: auto-start blocked
         check(!BootRecovery.autoStartMissed(32, 32, 1000, 2000));  // captured this boot
         check(!BootRecovery.autoStartMissed(32, -2, 3000, 2000));  // installed after this boot: unknown, no warning
@@ -457,6 +457,42 @@ public final class StateHarness {
             if (value != null) context.secure.put(VoiceRepair.KEY,value);
             check(!VoiceRepair.run(context) && context.writes==0 && java.util.Objects.equals(value,context.secure.get(VoiceRepair.KEY)),"Non-Google or absent selection is never changed");
         }
+        // Resync (0.4.1-patch2): the role mirror's own Google value comes back; nothing else is ever written.
+        for (String drifted : new String[] { null, "", other }) {
+            context = new Context();
+            if (drifted != null) context.secure.put(VoiceRepair.KEY,drifted);
+            context.secure.put(VoiceRepair.ASSISTANT,google);
+            check(VoiceRepair.resync(context) && google.equals(context.secure.get(VoiceRepair.KEY)) && context.writes==1
+                && google.equals(context.secure.get(VoiceRepair.ASSISTANT)),"Role says Google: drifted voice service is set back to it");
+        }
+        context = new Context();
+        context.secure.put(VoiceRepair.KEY,google);
+        context.secure.put(VoiceRepair.ASSISTANT,google);
+        check(VoiceRepair.resync(context) && context.writes==0,"In sync: resync writes nothing");
+        for (String role : new String[] { null, other, "com.google.android.googlequicksearchbox/.A:com.example/.B" }) {
+            context = new Context();
+            context.secure.put(VoiceRepair.KEY,other);
+            if (role != null) context.secure.put(VoiceRepair.ASSISTANT,role);
+            check(!VoiceRepair.resync(context) && context.writes==0 && other.equals(context.secure.get(VoiceRepair.KEY)),"Role not Google: the user's other assistant is never replaced");
+        }
+        context = new Context();
+        context.permission = -1;
+        context.secure.put(VoiceRepair.KEY,other);
+        context.secure.put(VoiceRepair.ASSISTANT,google);
+        check(!VoiceRepair.resync(context) && context.writes==0,"Missing WSS: resync makes no writes");
+        context = new Context();
+        context.secure.put(VoiceRepair.KEY,other);
+        context.secure.put(VoiceRepair.ASSISTANT,google);
+        bar(context).edit().putString(VoiceRepair.PENDING,google).commit();
+        context.secure.put(VoiceRepair.KEY,other);
+        check(VoiceRepair.finish(context) && google.equals(context.secure.get(VoiceRepair.KEY)) && !bar(context).contains(VoiceRepair.PENDING),
+            "Another service filled this app's own clear while the role is still Google: the original comes back");
+        context = new Context();
+        context.secure.put(VoiceRepair.KEY,other);
+        context.secure.put(VoiceRepair.ASSISTANT,other);
+        bar(context).edit().putString(VoiceRepair.PENDING,google).commit();
+        check(!VoiceRepair.finish(context) && other.equals(context.secure.get(VoiceRepair.KEY)),"User chose another assistant (role changed too): it is kept");
+
         context = new Context();
         context.permission = -1;
         context.secure.put(VoiceRepair.KEY,google);
@@ -906,13 +942,16 @@ if ($unguarded -match 'powerSwitch\.setChecked\(|lockedSwitch\.setChecked\(|doub
     $settingsSource -notmatch '(?s)doubleSwitch = toggle\("[^"]*", BarService\.doublePress\(this\), \(view, checked\) -> \{\s*if \(syncing\) return;' -or
     $settingsSource -notmatch '(?s)if \(consent\) builder\.setPositiveButton\("[^"]*", \(dialog, which\) -> \{\s*BarService\.setDoublePress\(this, true\);' -or
     ([regex]::Matches($settingsSource, 'setDoublePress\(this, true\)')).Count -ne 1 -or
-    $settingsSource -notmatch '(?s)bootSwitch = toggle\("[^"]*", BootRecovery\.wanted\(this\), \(view, checked\) -> \{\s*if \(syncing\) return;') {
+    $settingsSource -notmatch '(?s)bootSwitch = toggle\("[^"]*", BootRecovery\.active\(this\), \(view, checked\) -> \{\s*if \(syncing\) return;') {
     throw 'Settings refresh must not trigger repair or enable/disable setters'
 }
 $securityChecks++
-if ([regex]::Matches($allSources['VoiceRepair.java'], 'Settings\.Secure\.put\w*\(context\.getContentResolver\(\), KEY,').Count -ne 2 -or
-    $allSources['VoiceRepair.java'] -match '"assistant"|Settings\.(Global|System)\.put|ROLE_ASSISTANT|RoleManager') {
-    throw 'Voice repair may only clear and restore voice_interaction_service'
+# Clear, restore, and resync (writes back the role mirror's own Google value, 0.4.1-patch2). The role mirror
+# "assistant" is only read: never written, and no role API.
+if ([regex]::Matches($allSources['VoiceRepair.java'], 'Settings\.Secure\.put\w*\(context\.getContentResolver\(\), KEY,').Count -ne 3 -or
+    [regex]::Matches($allSources['VoiceRepair.java'], 'Settings\.Secure\.put').Count -ne 3 -or
+    $allSources['VoiceRepair.java'] -match 'put\w*\([^;]*ASSISTANT|Settings\.(Global|System)\.put|ROLE_ASSISTANT|RoleManager') {
+    throw 'Voice repair may only clear, restore and resync voice_interaction_service'
 }
 $securityChecks++
 if ($allSources['GeminiSession.java'] -match 'ACTION_ASSIST|ACTION_VOICE_COMMAND|VOICE_ASSIST|ACTION_SEARCH_LONG_PRESS|getLaunchIntentForPackage|makeMainActivity|CATEGORY_LAUNCHER|startActivity') {
@@ -983,7 +1022,8 @@ if ($allowedSources -match 'BootConsent|performAction|ACTION_CLICK|Accessibility
 }
 $securityChecks++
 # The log-access confirmation is always answered by the user: manual requests and the first-unlock prompt only open it.
-if ($barService -notmatch 'static void requestApproval\(Context context\) \{\s*prefs\(context\)\.edit\(\)\.putBoolean\(LOG_DECLINED, false\)\.apply\(\);\s*launchBridge\(context\);\s*\}' -or
+# A stale waiting connection may be closed first (0.4.1-patch2), so the request shows a fresh confirmation.
+if ($barService -notmatch '(?s)static void requestApproval\(Context context\) \{\s*prefs\(context\)\.edit\(\)\.putBoolean\(LOG_DECLINED, false\)\.apply\(\);\s*(//[^\n]*\n\s*)*BarService service = instance;\s*if \(service != null && service\.logs\.state\(\) == LogSession\.CONNECTING\) service\.logs\.close\(\);\s*launchBridge\(context\);\s*\}' -or
     $barService -notmatch 'bar\.edit\(\)\.putInt\(LOG_AUTO, attempts \+ 1\)\.apply\(\);\s*launchBridge\(this\);\s*\}' -or
     $allSources['BootReceiver.java'] -match 'BarService\.(?!overlayMode\(context\)|class\))') {
     throw 'Manual and first-unlock log approval prompts must only be shown, never answered by the app'

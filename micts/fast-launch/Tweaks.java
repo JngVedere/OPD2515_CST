@@ -13,7 +13,7 @@ import android.util.Log;
  * Optional system tweaks under 설정 → 고급 (user request; the same switches the 欢太工具箱 app offers, written here with this
  * app's own WRITE_SECURE_SETTINGS instead of a shell). Every key written is listed in this class and pinned by the
  * security test; nothing is written unless the user flips the matching switch or resets all settings, except the one
- * default in applyDefaults.
+ * default in applyDefaults and reapply, which only re-writes values the user already chose here.
  * Not possible without a shell (no permission an app can hold): freezing the OPPO installer page (com.oplus.appdetail),
  * which shows the ADB command instead. The refresh rate goes through ColorOS's own Secure key, not the private System
  * keys. The System UI Tuner opens through TUNER_ALIAS.
@@ -165,6 +165,22 @@ final class Tweaks {
      */
     static void applyDefaults(Context context) {
         if (!prefs(context).contains(STATE + SYSTEM_OPT)) setSecure(context, SYSTEM_OPT, true);
+    }
+
+    /**
+     * After a reboot: puts back the switches the user set in this app. Device (0.4.1-patch2): ColorOS resets
+     * clock_seconds to 0 at every boot while the switch, which shows what this app last wrote, still read "on".
+     * Only values this app wrote are re-applied; Extra Dim is left to Android's own "keep on after restart" option.
+     */
+    static void reapply(Context context) {
+        for (String key : new String[]{CLOCK_SECONDS, ROTATION_SUGGESTIONS, SYSTEM_OPT}) {
+            if (!prefs(context).contains(STATE + key)) continue;
+            boolean wanted = prefs(context).getBoolean(STATE + key, false);
+            try {
+                if (Settings.Secure.getInt(context.getContentResolver(), key, wanted ? 0 : 1) == (wanted ? 1 : 0)) continue;
+            } catch (RuntimeException unreadable) { /* @hide keys may be unreadable: write anyway */ }
+            if (setSecure(context, key, wanted)) Log.i("PadTweaks", "re-applied after boot: " + key);
+        }
     }
 
     /** 모든 설정 초기화: every switch of this class back to its default (fails quietly without 보안 설정 쓰기). */

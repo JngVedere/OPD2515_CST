@@ -643,6 +643,7 @@ public final class SetupActivity extends Activity {
         if (syncing) return;
         preferences.edit().putBoolean(key, checked).apply();
         Alerts.scheduleUpdateCheck(this);
+        if (Alerts.LOG.equals(key)) islandAlert.setEnabled(checked); // the capsule only carries the log alert
         if (!checked) return;
         // The capsule also needs this app's Live Updates switch (ColorOS: off by default); open it when it is off.
         if (Alerts.ISLAND.equals(key) && Build.VERSION.SDK_INT >= 36 && !Alerts.islandAllowed(this)) { openPromotionSettings(); return; }
@@ -878,7 +879,7 @@ public final class SetupActivity extends Activity {
             + "이 항목은 시스템 언어가 English일 때만\n보일 수 있습니다.", false);
         Button developer = phrase(new Button(builder.getContext()));
         developer.setText("개발자 옵션 열기"); developer.setAllCaps(false);
-        developer.setOnClickListener(v -> openDeveloperOptions());
+        developer.setOnClickListener(v -> openDeveloperOptions(true));
         LinearLayout.LayoutParams developerParams = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         developerParams.bottomMargin = dp(4);
         panel.addView(developer, developerParams);
@@ -890,7 +891,12 @@ public final class SetupActivity extends Activity {
     }
 
     /** Developer options; when off, switched on first (WRITE_SECURE_SETTINGS) so the page opens instead of being refused. */
-    private void openDeveloperOptions() {
+    /**
+     * toSystemOpt: the ADB guide's button scrolls straight to 'Disable system optimization' (Settings' standard
+     * highlight extra with that item's key; device: ColorOS scrolls to it). Without the item (Korean and the flag off)
+     * the page simply opens at the top.
+     */
+    private void openDeveloperOptions(boolean toSystemOpt) {
         boolean wasOff = !Tweaks.developerOptionsOn(this);
         if (wasOff && !Tweaks.enableDeveloperOptions(this)) {
             Toast.makeText(this, "개발자 옵션이 꺼져 있습니다.\n휴대폰 정보에서 버전 번호를\n7번 눌러 직접 켜주세요.", Toast.LENGTH_LONG).show();
@@ -899,6 +905,7 @@ public final class SetupActivity extends Activity {
         }
         if (wasOff) Toast.makeText(this, "개발자 옵션을 켰습니다.", Toast.LENGTH_SHORT).show();
         Intent developer = new Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS);
+        if (toSystemOpt) developer.putExtra(":settings:fragment_args_key", "safecenter_system_optimization");
         if (getPackageManager().resolveActivity(developer, 0) != null && Tweaks.start(this, developer)) return;
         // Device: after developer options are switched off in Settings, the page itself is disabled (launch result -91,
         // "not resolved") even once the setting is back on. Settings enables it again when one of its own screens
@@ -1323,7 +1330,7 @@ public final class SetupActivity extends Activity {
         text("시스템 설정 일부를 바로 바꾸거나 숨겨진 설정 화면을 엽니다.\n켠 기능은 끄면 원래대로 돌아갑니다.\n보안 설정 쓰기 권한(최초 ADB 설정)이 필요합니다.", 14);
         divider(section);
         // First item of 편의 기능 (user request; it used to sit in 추가 설정 on the home page).
-        bootSwitch = toggle("재부팅 후 자동 복구", BootRecovery.wanted(this), (view, checked) -> {
+        bootSwitch = toggle("재부팅 후 자동 복구", BootRecovery.active(this), (view, checked) -> {
             if (syncing) return;
             if (checked && !BootRecovery.permitted(this)) {
                 ((Switch) view).setChecked(false);
@@ -1354,7 +1361,7 @@ public final class SetupActivity extends Activity {
         text("온라인 인증 없이 기기 이름을 바꿉니다.\n블루투스와 핫스팟 이름도 함께 바뀝니다.", 14);
         actionRow("시스템 UI 튜너", this::openTuner);
         actionRow("전역 최대 주사율 설정", this::refreshRateDialog);
-        actionRow("개발자 옵션 빠른 접근", this::openDeveloperOptions);
+        actionRow("개발자 옵션 빠른 접근", () -> openDeveloperOptions(false));
         // Sub-item of 개발자 옵션 빠른 접근 (user request): indented and a size smaller.
         Switch systemOpt = toggle("시스템 최적화 비활성화 항목 표시", Tweaks.secureOn(this, Tweaks.SYSTEM_OPT, false),
             (view, checked) -> tweakSecure(view, Tweaks.SYSTEM_OPT, checked, checked));
@@ -2508,11 +2515,18 @@ public final class SetupActivity extends Activity {
         islandDemo(); // the reopened floating window of a camera-island demo
         syncing = true;
         try {
-            bootSwitch.setChecked(BootRecovery.wanted(this));
+            bootSwitch.setChecked(BootRecovery.active(this));
             powerSwitch.setChecked(BarService.power(this));
             lockedSwitch.setChecked(BarService.lockedAssist(this));
             doubleSwitch.setChecked(BarService.doublePress(this));
             overlaySwitch.setChecked(BarService.overlayMode(this));
+            // Alerts show on only when Android can deliver them (notifications may be turned off later in system settings);
+            // the saved choice stays, so they work again once allowed. The capsule also needs the log alert and Live Updates.
+            boolean notify = getSystemService(android.app.NotificationManager.class).areNotificationsEnabled();
+            logAlert.setChecked(notify && Alerts.wanted(this, Alerts.LOG));
+            updateAlert.setChecked(notify && Alerts.wanted(this, Alerts.UPDATE));
+            islandAlert.setChecked(logAlert.isChecked() && Alerts.wanted(this, Alerts.ISLAND) && Alerts.islandAllowed(this));
+            islandAlert.setEnabled(logAlert.isChecked());
         } finally { syncing = false; }
         // Overlay mode: nothing restarts the service after a kill; opening this screen does.
         if (BarService.overlayMode(this) && !BarService.serviceRunning() && Settings.canDrawOverlays(this))

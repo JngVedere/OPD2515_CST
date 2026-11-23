@@ -46,6 +46,9 @@ final class BootRecovery {
         return context.getSharedPreferences("bar", Context.MODE_PRIVATE).getBoolean(OPTION, true);
     }
 
+    /** What the switch shows: on only when it can work. The saved default stays on, so granting the permission enables it. */
+    static boolean active(Context context) { return wanted(context) && permitted(context); }
+
     /**
      * ColorOS "자동 실행" off blocks this app's boot broadcasts (device: no LOCKED_BOOT_COMPLETED capture that boot), so
      * a captured boot count behind the current one means auto-start was blocked. Unknown after an install or update

@@ -77,6 +77,7 @@ public final class BarService extends AccessibilityService {
      */
     static int googleVoice(Context context) {
         try {
+            VoiceRepair.resync(context); // Settings showing Google while the service setting drifted: repair first
             String selected = Settings.Secure.getString(context.getContentResolver(), VoiceRepair.KEY);
             if (!VoiceRepair.googleSelected(selected)) return StatusPolicy.GOOGLE_NONE;
             ComponentName component = ComponentName.unflattenFromString(selected);
@@ -203,10 +204,25 @@ public final class BarService extends AccessibilityService {
     static void logBridgeUnused() {
         BarService service = instance;
         if (service == null) return;
+        // Nothing was asked, so this attempt does not count against AUTO_PROMPTS (device: ColorOS's post-boot accessibility
+        // warning or "USB 사용" left unanswered for ~1.5 min used up all three, and no confirmation came that boot).
+        // Bounded per boot; screen off or locked pauses the retries anyway (LogTrigger.autoPrompt).
+        SharedPreferences bar = prefs(service);
+        int unused = bar.getInt(LOG_UNUSED, 0), attempts = bar.getInt(LOG_AUTO, 0);
+        if (unused < MAX_UNUSED_REFUNDS && attempts > 0)
+            bar.edit().putInt(LOG_UNUSED, unused + 1).putInt(LOG_AUTO, attempts - 1).apply();
         service.handler.removeCallbacks(service.autoRetry);
         service.handler.postDelayed(service.autoRetry, UNUSED_BRIDGE_RETRY);
     }
     private static final long UNUSED_BRIDGE_RETRY = 2_000;
+    private static final String LOG_UNUSED = "log_unused";
+    private static final int MAX_UNUSED_REFUNDS = 20; // ~10 min of a covered screen (30 s focus wait + 2 s each)
+
+    /** The bridge lost focus after its request: Android's confirmation is showing (see LogSession.dialogShown). */
+    static void logDialogShown() {
+        BarService service = instance;
+        if (service != null) service.logs.dialogShown();
+    }
 
     /** The bridge regained focus after its request: Android's confirmation closed (see LogSession.answered). */
     static void logAnswered() {
@@ -219,12 +235,44 @@ public final class BarService extends AccessibilityService {
      * silently refuses new requests for about a minute (DECLINE_COOLDOWN), so a retry before then shows nothing.
      */
     static final String LOG_DENIED_AT = "log_denied_at", LOG_DENIALS = "log_denials";
-    static final long DECLINE_COOLDOWN = 60_000;
+    /** Device (0.4.1-patch2): requests at +64 s after a refusal were still refused silently, +73 s showed the dialog. */
+    static final long DECLINE_COOLDOWN = 70_000;
+
+    /** Time left before Android shows a confirmation again after the last refusal; 0 when a request can show now. */
+    static long declineWait(Context context) {
+        long at = prefs(context).getLong(LOG_DENIED_AT, 0), left = at + DECLINE_COOLDOWN - System.currentTimeMillis();
+        return at > 0 && left > 0 && left <= DECLINE_COOLDOWN ? left : 0;
+    }
+
+    /**
+     * A request made inside the refusal window would be refused silently (no dialog, then a timeout that looks broken).
+     * The bridge defers it here instead: one request as soon as the window ends, if still needed and the screen is in use.
+     */
+    static void requestAfterDecline(long delay) {
+        BarService service = instance;
+        if (service == null) return;
+        service.handler.removeCallbacks(service.declinedRetry);
+        service.handler.postDelayed(service.declinedRetry, delay + 500);
+    }
+    private final Runnable declinedRetry = () -> {
+        if (instance == this && logs.state() == LogSession.OFF && logsWanted(this) && logsPermitted(this) && unlockedScreen()
+                && !bridgeShowing()) launchBridge(this);
+    };
 
     /** Explicit user action from settings: one more standard confirmation, even after an earlier decline. */
     static void requestApproval(Context context) {
         prefs(context).edit().putBoolean(LOG_DECLINED, false).apply();
+        // A connection still waiting for its answer is replaced: the user asked because no confirmation is visible, and
+        // Android shows a confirmation only for a new connection (device: "확인 창에서 허용 대기 중" with no dialog).
+        BarService service = instance;
+        if (service != null && service.logs.state() == LogSession.CONNECTING) service.logs.close();
         launchBridge(context);
+    }
+
+    /** The bridge was stopped (Home, screen off) while waiting: no confirmation is on screen for it any more. */
+    static void logDialogGone() {
+        BarService service = instance;
+        if (service != null) service.logs.dialogGone();
     }
 
     private static void launchBridge(Context context) {
@@ -653,7 +701,7 @@ public final class BarService extends AccessibilityService {
         SharedPreferences bar = prefs(this);
         int boot = Settings.Global.getInt(getContentResolver(), Settings.Global.BOOT_COUNT, -1);
         if (bar.getInt(LOG_BOOT, -2) != boot)
-            bar.edit().putInt(LOG_BOOT, boot).putInt(LOG_AUTO, 0).putBoolean(LOG_DECLINED, false).remove(LOG_DENIED_AT).putInt(LOG_DENIALS, 0).apply();
+            bar.edit().putInt(LOG_BOOT, boot).putInt(LOG_AUTO, 0).putInt(LOG_UNUSED, 0).putBoolean(LOG_DECLINED, false).remove(LOG_DENIED_AT).putInt(LOG_DENIALS, 0).apply();
         int attempts = bar.getInt(LOG_AUTO, 0);
         PowerManager power = getSystemService(PowerManager.class);
         boolean declined = !afterUnlock && bar.getBoolean(LOG_DECLINED, false);
@@ -686,7 +734,13 @@ public final class BarService extends AccessibilityService {
         launchBridge(this);
     }
 
-    private static final long GUIDE_SETTLE = 32_000;
+    /**
+     * 0.4.1-patch2: was 32 s, timed to let ColorOS's post-unlock accessibility warning (device: +35 s after unlock) pass
+     * first, because a confirmation it covered was lost to the 35 s activation timeout. The session now waits for the
+     * answer while the confirmation is up (LogSession.dialogShown), so a covered confirmation is answered after
+     * '계속 사용'; the first prompt only lets the unlock settle. The bridge still asks only with focus.
+     */
+    private static final long GUIDE_SETTLE = 2_000;
     /** elapsedRealtime of onServiceConnected (accessibility just enabled or re-added). */
     private long connectedAt;
     private final Runnable bootPrompt = () -> maybeAutoPrompt(true);
@@ -730,6 +784,7 @@ public final class BarService extends AccessibilityService {
         windows = getSystemService(WindowManager.class);
         appWindows = getApplicationContext().getSystemService(WindowManager.class);
         VoiceRepair.recover(this); // A voice rebind interrupted by process death restores the exact original selection.
+        Tweaks.reapply(this); // ColorOS resets some of them (clock seconds) at boot
         int systemUi;
         try { systemUi = getPackageManager().getApplicationInfo("com.android.systemui", 0).uid; }
         catch (PackageManager.NameNotFoundException missing) { systemUi = -1; } // Bar events then never match.
@@ -907,6 +962,7 @@ public final class BarService extends AccessibilityService {
         handler.removeCallbacks(bootPrompt);
         handler.removeCallbacks(unlockWatch);
         handler.removeCallbacks(recoverPrompt);
+        handler.removeCallbacks(declinedRetry);
         running = false;
         cancelPending();
         detach();

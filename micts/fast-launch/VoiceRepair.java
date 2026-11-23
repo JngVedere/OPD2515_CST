@@ -49,6 +49,31 @@ final class VoiceRepair {
 
     static boolean busy() { return RUNNING.get(); }
 
+    /** The assistant role's mirror (what Settings → 기본 디지털 어시스턴트 앱 shows as selected). */
+    static final String ASSISTANT = "assistant";
+
+    /**
+     * Role/setting drift (reported on two tablets, 0.4.1): Settings shows Google as the digital assistant (role and
+     * `assistant`) while voice_interaction_service holds another or no service, so Google cannot be reached until the
+     * user picks another assistant and Google again. When the role mirror is exactly one Google component, that value
+     * is written back to voice_interaction_service: the user's own choice, never another assistant. Needs WSS.
+     * True when voice_interaction_service holds Google afterwards.
+     */
+    static synchronized boolean resync(Context context) {
+        try {
+            if (googleSelected(Settings.Secure.getString(context.getContentResolver(), KEY))) return true;
+            if (busy() || prefs(context).contains(PENDING) || !writable(context)) return false; // a rebind owns it
+            String chosen = Settings.Secure.getString(context.getContentResolver(), ASSISTANT);
+            if (!googleSelected(chosen)) return false;
+            boolean written = Settings.Secure.putString(context.getContentResolver(), KEY, chosen);
+            Log.i(TAG, "voice service resynced from the assistant role written=" + written);
+            return written && googleSelected(Settings.Secure.getString(context.getContentResolver(), KEY));
+        } catch (RuntimeException unavailable) {
+            Log.w(TAG, "voice service resync unavailable: " + unavailable.getClass().getSimpleName());
+            return false;
+        }
+    }
+
     /**
      * Blocking (sleeps UNBOUND_MS); call off the main thread. Concurrent requests are dropped, not queued.
      * True only if the exact original is back in place after a rebind.
@@ -133,6 +158,12 @@ final class VoiceRepair {
             if (original == null) return true;
             String current = Settings.Secure.getString(context.getContentResolver(), KEY);
             boolean cleared = current == null || current.isEmpty();
+            // Another service took the slot during this app's own clear while the role still names this Google value:
+            // the system filled the gap, the user did not choose it (Settings would have changed the role too).
+            if (!cleared && !original.equals(current) && original.equals(Settings.Secure.getString(context.getContentResolver(), ASSISTANT))) {
+                Log.i(TAG, "rebind: another service filled the gap; restoring the role's Google service");
+                cleared = true;
+            }
             if (cleared && (!writable(context) || !Settings.Secure.putString(context.getContentResolver(), KEY, original))) return false;
             if (!prefs(context).edit().remove(PENDING).commit()) return false;
             return cleared || original.equals(current);

@@ -16,7 +16,7 @@ final class TouchArea {
      */
     static final int HOLD = 195, MIN_HOLD = 50, MAX_HOLD = 1000;
     /** Wait after the Google rebind before Gemini is requested (VoiceRepair). Bounded well under POWER_LAUNCH_AGE. */
-    static final int SETTLE = 15, MAX_SETTLE = 1000;
+    static final int SETTLE = 20, MAX_SETTLE = 1000;
     static final String HOLD_KEY = "hold_ms", SETTLE_KEY = "gemini_settle_ms";
     static final String[] FIELDS = {"x", "bottom", "width", "height"};
 

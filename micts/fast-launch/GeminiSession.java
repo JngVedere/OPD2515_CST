@@ -61,10 +61,19 @@ final class GeminiSession {
         }
     }
 
-    /** The session goes to the active voice interaction service: only Google's may receive these requests. */
+    /**
+     * The session goes to the active voice interaction service and may carry a screenshot, so it is refused while
+     * another assistant is the active service. A role/setting drift is repaired first (VoiceRepair.resync). An empty
+     * value no longer blocks: the system then has no service to reach and refuses on its own, as with MiCTS, which asks
+     * the system without checking the selection (0.4.1-patch2: Settings showed Google while this check refused).
+     */
     static boolean googleSelected(Context context) {
-        String selected = Settings.Secure.getString(context.getContentResolver(), "voice_interaction_service");
-        ComponentName component = selected == null ? null : ComponentName.unflattenFromString(selected);
+        VoiceRepair.resync(context);
+        String selected;
+        try { selected = Settings.Secure.getString(context.getContentResolver(), "voice_interaction_service"); }
+        catch (RuntimeException unreadable) { return false; }
+        if (selected == null || selected.isEmpty()) return true;
+        ComponentName component = ComponentName.unflattenFromString(selected);
         return component != null && GOOGLE.equals(component.getPackageName());
     }
 
