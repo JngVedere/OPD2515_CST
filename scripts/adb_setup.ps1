@@ -59,3 +59,5 @@ Read-Host "기기 로그 접근을 허용한 뒤 Enter"
 
 adb shell input keyevent KEYCODE_HOME
 adb shell input keyevent KEYCODE_ASSIST
+
+Write-Host "`n남은 안내에 따라 '자동 실행'과 '앱 잠금'을 켜주세요." -ForegroundColor Yellow
