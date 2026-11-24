@@ -310,4 +310,4 @@ The project's features and development direction are determined by the developer
 | --- | --- | --- |
 | ChatGPT | GPT Sol 6.1 High | Requirements, task coordination, feature implementation and fixes, and on-device ADB testing. |
 | Claude | Claude Opus 5.5 High | Feature implementation, independent code review, and bug analysis. |
-| Gemini | Gemini 4 Neon Chat | Documentation review. |
+| Gemini | Gemini 4 Neon High | Documentation review. |
