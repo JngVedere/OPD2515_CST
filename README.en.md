@@ -2,6 +2,9 @@
 
 [한국어](./README.md) · **English**
 
+> [!NOTE]
+> OpdCTS currently(v0.4.1) supports Korean only. An English README is provided for international users, but the app itself is not yet available in English.
+
 **Use Circle to Search and Gemini Assistant naturally on your OPPO Pad Mini.**
 
 OpdCTS is an Android app that makes it easy to launch Google Circle to Search and Gemini Assistant on ColorOS. It is designed for responsiveness and a natural user experience, and lets you choose which app to launch.
