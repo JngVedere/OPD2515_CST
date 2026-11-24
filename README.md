@@ -306,4 +306,4 @@ adb install Circle-to-Search-Trigger-0.4.0.apk
 | --- | --- | --- |
 | ChatGPT | GPT Sol 6.1 High | 요구사항 정리, 작업 조율, 기능 구현 및 수정, ADB 실기기 테스트 |
 | Claude | Claude Opus 5.5 High | 기능 구현, 독립적인 코드 리뷰 및 버그 분석 |
-| Gemini | Gemini 4 Neon Chat | 문서 검토 |
+| Gemini | Gemini 4 Neon High | 문서 검토 |
