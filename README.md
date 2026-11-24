@@ -155,8 +155,8 @@ ADB가 PATH에 등록되어 있거나 PowerShell에서 실행할 수 있어야 �
 ### 설정 방법
 
 1. 태블릿의 **개발자 옵션 → USB 디버깅**을 활성화합니다.
-2. 태블릿을 PC에 연결하고 USB 디버깅을 허용합니다.
-3. Windows PowerShell에서 다음 명령어를 실행합니다.
+2. 태블릿을 PC에 연결하고 **USB 디버깅을 허용** 합니다.
+3. **Windows PowerShell** 에서 다음 명령어를 실행합니다.
 
 ```powershell
 irm https://raw.githubusercontent.com/JngVedere/OPD2515_CST/main/scripts/adb_setup.ps1 | iex
