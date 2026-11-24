@@ -1,5 +1,7 @@
 # Circle-to-Search Trigger (OpdCTS)
 
+**한국어** · [English](./README.en.md)
+
 **OPPO Pad Mini에서 Circle to Search와 Gemini Assistant를 자연스럽게 사용해 보세요.**
 
 OpdCTS는 ColorOS에서 Google Circle to Search와 Gemini Assistant를 편리하게 호출할 수 있도록 도와주는 Android 앱입니다. 반응성과 자연스러운 사용자 경험을 중심으로 개발되었으며, 연결 앱을 자유롭게 변경할 수 있습니다.
