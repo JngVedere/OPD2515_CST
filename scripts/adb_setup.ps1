@@ -1,3 +1,4 @@
+
 $pkg = "dev.padhelper.fastcts"
 $user = 0
 $svc = "$pkg/$pkg.BarService"
@@ -17,6 +18,7 @@ adb shell settings put global oplus.speechassist.main.type 2
 
 adb shell settings --user $user put secure assist_structure_enabled 1
 adb shell settings --user $user put secure assist_screenshot_enabled 1
+adb shell cmd appops set --user $user com.google.android.googlequicksearchbox READ_SCREEN_CONTEXT allow
 
 adb shell pm grant --user $user $pkg android.permission.WRITE_SECURE_SETTINGS
 adb shell pm grant --user $user $pkg android.permission.POST_NOTIFICATIONS
@@ -123,6 +125,11 @@ $results = @(
     Test-Setup "Assist screenshot" {
         (Read-Adb shell settings --user $user get secure assist_screenshot_enabled) `
             -eq "1"
+    }
+
+    Test-Setup "Assistant screen context" {
+        (Read-Adb shell cmd appops get --user $user com.google.android.googlequicksearchbox READ_SCREEN_CONTEXT) `
+            -match "(?m)\bREAD_SCREEN_CONTEXT:\s*allow\b"
     }
 
     foreach ($permission in @(
