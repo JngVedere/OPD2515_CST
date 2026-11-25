@@ -200,4 +200,6 @@ if ($failed -eq 0 -and $unknown -eq 0) {
     Write-Host "`nSome settings require attention." -ForegroundColor Yellow
 }
 
+adb shell am start -W --user $user -n "$pkg/.SetupActivity" | Out-Null
+
 Write-Host "`n남은 안내에 따라 '자동 실행'과 '앱 잠금'을 켜주세요." -ForegroundColor Yellow
