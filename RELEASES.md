@@ -5,6 +5,7 @@ Circle-to-Search Trigger의 모든 공개 릴리즈 기록입니다. 최신 버�
 
 | 버전 | 채널 | 날짜 |
 | --- | --- | --- |
+| [v0.4.1-patch3](https://github.com/JngVedere/OPD2515_CST/releases/tag/v0.4.1-patch3) | 베타 | 2026-11-26 |
 | [v0.4.1-patch2](https://github.com/JngVedere/OPD2515_CST/releases/tag/v0.4.1-patch2) | 베타 | 2026-11-23 |
 | [v0.4.1](https://github.com/JngVedere/OPD2515_CST/releases/tag/v0.4.1) | 정식 | 2026-11-22 |
 | [v0.4.0](https://github.com/JngVedere/OPD2515_CST/releases/tag/v0.4.0) | 정식 | 2026-11-21 |
@@ -19,6 +20,29 @@ Circle-to-Search Trigger의 모든 공개 릴리즈 기록입니다. 최신 버�
 | [v0.3.2](https://github.com/JngVedere/OPD2515_CST/releases/tag/v0.3.2) | 정식 | 2026-11-16 |
 | [v0.3.0](https://github.com/JngVedere/OPD2515_CST/releases/tag/v0.3.0) | 정식 | 2026-11-15 |
 | [v0.2.6](https://github.com/JngVedere/OPD2515_CST/releases/tag/v0.2.6) | 정식 | 2026-11-15 |
+
+---
+
+## [v0.4.1-patch3 (Beta)](https://github.com/JngVedere/OPD2515_CST/releases/tag/v0.4.1-patch3) · 2026-11-26 · 베타
+
+0.4.1-patch2에서 ColorOS가 부팅 중 OpdCTS의 접근성을 먼저 해제하면 자동 복구가 시작되지 않던 문제를 고쳤습니다.
+
+#### 재부팅 후 자동 복구
+
+- **접근성 목록에서 OpdCTS가 빠지면 부팅당 한 번 다시 등록합니다.** 부팅 후 접근성 상태를 확인하는 시간을 5초에서 30초로 늘렸습니다.
+- 접근성 전체 스위치가 잠시 꺼져도 OpdCTS가 목록에 남아 있으면 복구 시도를 보류합니다.
+- 자동 연결에 실패하면 알림을 눌러 시스템 접근성 설정을 열 수 있습니다.
+- OPPO Pad Mini(OPD2515) 실기기에서 ColorOS 강제 해제 후 접근성 서비스가 다시 연결되는 것을 확인했습니다.
+
+#### 편의성 개선
+
+- **‘시스템 최적화 비활성화 항목 표시’**의 기본값을 끔으로 바꿨습니다. 이미 저장된 값은 유지됩니다.
+- **‘전역 최대 주사율 설정’**의 자동 옵션은 **‘자동’**으로 간단히 표시합니다.
+
+#### 업데이트 시 참고
+
+- **재부팅 후 자동 복구**는 기본으로 켜져 있으며, 보안 설정 쓰기 권한이 필요합니다. 이전 버전에서 직접 켜거나 끈 설정은 업데이트 후에도 적용됩니다.
+- 재부팅 후 기기 로그 승인 창이 뜨면 **‘일회성 액세스 허용’**을 눌러주세요.
 
 ---
 

@@ -13,6 +13,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.os.Build;
+import android.provider.Settings;
 import android.util.Log;
 
 /**
@@ -32,7 +33,7 @@ final class Alerts {
      */
     static final String ISLAND = "alert_island";
     private static final String CHECKED_AT = "update_checked_at", NOTIFIED_CODE = "update_notified_code";
-    static final int LOG_MISSING = 2, NEW_VERSION = 3, TEST = 4;
+    static final int LOG_MISSING = 2, NEW_VERSION = 3, TEST = 4, BOOT_ACCESS = 5;
     private static final long TEST_MS = 10_000;
     /** Set when an update notification went out; the settings screen shows its update banner once on the next open. */
     private static final String PENDING = "update_pending";
@@ -63,6 +64,17 @@ final class Alerts {
     static void logRestored(Context context) {
         NotificationManager manager = context.getSystemService(NotificationManager.class);
         if (manager != null) manager.cancel(LOG_MISSING);
+    }
+
+    static void accessibilityMissing(Context context) {
+        post(context, BOOT_ACCESS, "boot_accessibility", "재부팅 후 접근성", "접근성을 다시 연결해주세요",
+            "눌러서 다운로드한 앱 → Circle-to-Search Trigger를 확인해주세요.", false,
+            new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+    }
+
+    static void accessibilityRestored(Context context) {
+        NotificationManager manager = context.getSystemService(NotificationManager.class);
+        if (manager != null) manager.cancel(BOOT_ACCESS);
     }
 
     private static final int UPDATE_JOB = 1;
@@ -127,7 +139,6 @@ final class Alerts {
         return true;
     }
 
-    /** open: an explicit intent to one of this app's own activities, without extras. */
     /** Whether a Live Update from this app can reach the capsule now (Android 16+, per-app switch on). */
     static boolean islandAllowed(Context context) {
         NotificationManager manager = context.getSystemService(NotificationManager.class);

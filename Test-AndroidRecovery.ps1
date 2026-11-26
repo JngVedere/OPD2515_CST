@@ -28,10 +28,6 @@ public final class RecoveryHarness {
         check(!BootRecovery.containsOwn("evil." + own));
         check(BootRecovery.containsOwn(other + ":" + own));
         check(!BootRecovery.containsOwn(null));
-        for (int bits = 0; bits < 64; bits++) {
-            check(BootRecovery.shouldRecover((bits & 1) != 0, (bits & 2) != 0,
-                (bits & 4) != 0, (bits & 8) != 0, (bits & 16) != 0, (bits & 32) != 0) == (bits == 63));
-        }
         check(BarGesture.releaseShouldTrigger(350, 350, false, false));
         check(!BarGesture.releaseShouldTrigger(349, 350, false, false));
         check(!BarGesture.releaseShouldTrigger(1000, 350, true, false));
@@ -110,6 +106,7 @@ public class SharedPreferences {
             pending.forEach((key,value) -> { if (value == null) values.remove(key); else values.put(key,value); });
             return true;
         }
+        public void apply() { commit(); }
     }
 }
 '@
@@ -118,6 +115,7 @@ package android.content;
 import java.util.*;
 public class Context {
     public static final int MODE_PRIVATE = 0;
+    public static final int RECEIVER_NOT_EXPORTED = 4;
     private final Context root;
     private final boolean deviceProtected;
     private final Map<String,SharedPreferences> credentialPrefs = new HashMap<>();
@@ -126,6 +124,10 @@ public class Context {
     public int globalWrites, failGlobalWrites, globalWritesFailAt;
     public int permission, bootCount = 4, writes, failIntWrites, failStringWrites, throwReads, throwStringWrites, throwAfterStringWrites;
     public boolean credentialLocked;
+    public int notices;
+    public boolean notice;
+    public BroadcastReceiver unlock;
+    public final Map<String,android.database.ContentObserver> observers = new HashMap<>();
     public Runnable beforeWrite;
     public Context() { root = this; deviceProtected = false; }
     private Context(Context root) { this.root = root; deviceProtected = true; }
@@ -135,7 +137,78 @@ public class Context {
         return (deviceProtected ? root.devicePrefs : root.credentialPrefs).computeIfAbsent(name, key -> new SharedPreferences());
     }
     public Context createDeviceProtectedStorageContext() { return new Context(root); }
+    public Context getApplicationContext() { return root; }
     public Context getContentResolver() { return root; }
+    public <T> T getSystemService(Class<T> type) { return type.cast(new android.os.UserManager(root)); }
+    public void registerReceiver(BroadcastReceiver receiver, IntentFilter filter, int flags) { unlock = receiver; }
+    public void registerReceiver(BroadcastReceiver receiver, IntentFilter filter) { unlock = receiver; }
+    public void unregisterReceiver(BroadcastReceiver receiver) { if (unlock == receiver) unlock = null; }
+    public void registerContentObserver(String uri, boolean descendants, android.database.ContentObserver observer) {
+        observers.put(uri, observer);
+    }
+    public void unregisterContentObserver(android.database.ContentObserver observer) { observers.values().removeIf(value -> value == observer); }
+}
+'@
+$fixtures['android/content/BroadcastReceiver.java'] = @'
+package android.content;
+public abstract class BroadcastReceiver { public abstract void onReceive(Context context, Intent intent); }
+'@
+$fixtures['android/content/Intent.java'] = @'
+package android.content;
+public class Intent { public static final String ACTION_USER_UNLOCKED = "unlocked"; }
+'@
+$fixtures['android/content/IntentFilter.java'] = @'
+package android.content;
+public class IntentFilter { public IntentFilter(String action) {} }
+'@
+$fixtures['android/os/UserManager.java'] = @'
+package android.os;
+import android.content.Context;
+public class UserManager {
+    private final Context context;
+    public UserManager(Context context) { this.context = context; }
+    public boolean isUserUnlocked() { return !context.credentialLocked; }
+}
+'@
+$fixtures['android/os/Build.java'] = @'
+package android.os;
+public class Build { public static class VERSION { public static final int SDK_INT = 37; } }
+'@
+$fixtures['android/os/SystemClock.java'] = @'
+package android.os;
+public class SystemClock {
+    public static long now;
+    public static long elapsedRealtime() { return now; }
+}
+'@
+$fixtures['android/os/Looper.java'] = @'
+package android.os;
+public class Looper { public static Looper getMainLooper() { return new Looper(); } }
+'@
+$fixtures['android/os/Handler.java'] = @'
+package android.os;
+import java.util.*;
+public class Handler {
+    private static final Map<Handler,Runnable> callbacks = new HashMap<>();
+    public Handler(Looper looper) {}
+    public void postDelayed(Runnable callback, long delay) {
+        if (delay != 30_000) throw new AssertionError("Unexpected delay " + delay);
+        callbacks.put(this,callback);
+    }
+    public void removeCallbacksAndMessages(Object token) { callbacks.remove(this); }
+    public static int pending() { return callbacks.size(); }
+    public static void finishWindow() {
+        SystemClock.now += 30_000;
+        for (Runnable callback : List.copyOf(callbacks.values())) callback.run();
+    }
+}
+'@
+$fixtures['android/database/ContentObserver.java'] = @'
+package android.database;
+import android.os.Handler;
+public abstract class ContentObserver {
+    public ContentObserver(Handler handler) {}
+    public abstract void onChange(boolean selfChange);
 }
 '@
 $fixtures['android/provider/Settings.java'] = @'
@@ -144,6 +217,7 @@ import android.content.Context;
 public class Settings {
     public static final class Secure {
         public static final String ENABLED_ACCESSIBILITY_SERVICES = "services", ACCESSIBILITY_ENABLED = "enabled";
+        public static String getUriFor(String key) { return key; }
         public static String getString(Context context, String key) {
             if (context.throwReads > 0) { context.throwReads--; throw new SecurityException("read denied"); }
             return context.secure.get(key);
@@ -193,8 +267,25 @@ public class Log {
 $fixtures['dev/padhelper/fastcts/BarService.java'] = @'
 package dev.padhelper.fastcts;
 import android.content.Context;
+import android.provider.Settings;
 public class BarService {
     static boolean enabled(Context context) { return context.getSharedPreferences("bar",0).getBoolean("enabled",false); }
+    static boolean overlayMode(Context context) { return context.getSharedPreferences("bar",0).getBoolean("overlay_mode",false); }
+    static boolean accessibilityRegistered(Context context) {
+        return BootRecovery.containsOwn(Settings.Secure.getString(context, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES));
+    }
+    static boolean bound;
+    static boolean accessibilityBound() { return bound; }
+    static boolean logsWanted(Context context) { return true; }
+    static int logState() { return 0; }
+}
+'@
+$fixtures['dev/padhelper/fastcts/Alerts.java'] = @'
+package dev.padhelper.fastcts;
+import android.content.Context;
+public class Alerts {
+    static void accessibilityMissing(Context context) { context.notice = true; context.notices++; }
+    static void accessibilityRestored(Context context) { context.notice = false; }
 }
 '@
 $fixtures['dev/padhelper/fastcts/StateHarness.java'] = @'
@@ -214,89 +305,104 @@ public final class StateHarness {
     private static int gesture(Context context) { return Settings.Secure.getInt(context,BarGesture.GESTURE_KEY,-1); }
     private static Context approvedBoot() {
         Context context = new Context();
-        bar(context).edit().putBoolean("enabled",true).putBoolean(BootRecovery.APPROVED,true)
-            .putBoolean(BootRecovery.OPTION,true).commit();
-        context.secure.put(Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES,OTHER+":"+BootRecovery.SERVICE);
-        context.secure.put(Settings.Secure.ACCESSIBILITY_ENABLED,"1");
-        context.credentialLocked = true;
-        BootRecovery.captureBeforeUnlock(context);
-        context.credentialLocked = false;
+        bar(context).edit().putBoolean("enabled",true).putBoolean(BootRecovery.APPROVED,true).commit();
+        context.secure.put(Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES,OTHER);
+        context.secure.put(Settings.Secure.ACCESSIBILITY_ENABLED,"0");
         return context;
     }
     public static void main(String[] args) {
         Context context = approvedBoot();
-        check(BootRecovery.eligible(context),"Approved same-boot snapshot is eligible");
-        context.secure.put(Settings.Secure.ACCESSIBILITY_ENABLED,"0");
-        BootRecovery.restore(context);
-        check(master(context)==1,"Retained own entry still repairs disabled master switch");
-        check(context.secure.get(Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES).equals(OTHER+":"+BootRecovery.SERVICE),"Master repair preserves exact service list");
-        check(context.writes==1,"Master-only repair does not rewrite service list");
-
-        context = approvedBoot();
-        context.secure.put(Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES,OTHER);
-        context.secure.put(Settings.Secure.ACCESSIBILITY_ENABLED,"0");
-        BootRecovery.restore(context);
-        check(context.secure.get(Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES).equals(OTHER+":"+BootRecovery.SERVICE),"Missing service appended after existing service");
-        check(master(context)==1,"Missing service and master both repaired");
-        check(context.writes==2,"Only two necessary settings written");
-        BootRecovery.restore(context);
-        check(context.writes==2,"Second restore is idempotent");
-
-        context = approvedBoot();
-        bar(context).edit().putBoolean(BootRecovery.OPTION,false).commit();
-        context.secure.put(Settings.Secure.ACCESSIBILITY_ENABLED,"0");
-        BootRecovery.restore(context);
-        check(master(context)==0 && context.writes==0,"Opt-out prevents all recovery writes");
-
-        context = approvedBoot();
-        context.secure.put(Settings.Secure.ACCESSIBILITY_ENABLED,"0");
-        context.credentialLocked = true;
-        BootRecovery.captureBeforeUnlock(context);
-        check(context.createDeviceProtectedStorageContext().getSharedPreferences("boot",0)
-            .getBoolean("was_enabled",false),"Pre-unlock computed master=0 must retain listed service approval");
-        context.credentialLocked = false;
-        check(BootRecovery.eligible(context),"Listed service stays eligible after first unlock despite pre-unlock master=0");
-        BootRecovery.restore(context);
-        check(master(context)==1,"Post-unlock recovery repairs computed master switch");
-
-        context = approvedBoot();
-        context.secure.put(Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES,OTHER);
-        context.secure.put(Settings.Secure.ACCESSIBILITY_ENABLED,"0");
-        context.credentialLocked = true;
-        BootRecovery.captureBeforeUnlock(context);
-        context.credentialLocked = false;
-        check(!BootRecovery.eligible(context),"Own entry absent before boot represents user opt-out");
-        BootRecovery.restore(context);
-        check(master(context)==0 && context.writes==0
-            && context.secure.get(Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES).equals(OTHER),"Pre-boot service opt-out preserves other services and disables recovery");
-
-        context = approvedBoot();
-        context.secure.put(Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES,OTHER);
-        context.secure.put(Settings.Secure.ACCESSIBILITY_ENABLED,"0");
-        context.failStringWrites = 1;
-        BootRecovery.restore(context);
-        check(master(context)==0 && context.writes==1,"Failed service-list write cannot enable master");
-
-        context = approvedBoot();
-        context.secure.put(Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES,OTHER);
-        context.secure.put(Settings.Secure.ACCESSIBILITY_ENABLED,"0");
-        context.failIntWrites = 1;
-        BootRecovery.restore(context);
-        check(master(context)==0 && BootRecovery.containsOwn(context.secure.get(Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES)),"Failed master write retains repairable own list entry");
-        BootRecovery.restore(context);
-        check(master(context)==1 && context.writes==3,"Retry repairs master even though own entry was already restored");
-
-        context = approvedBoot();
         context.permission = -1;
-        context.secure.put(Settings.Secure.ACCESSIBILITY_ENABLED,"0");
-        BootRecovery.restore(context);
-        check(master(context)==0 && context.writes==0,"Revoked WSS prevents boot writes");
-        context = approvedBoot();
-        context.bootCount++;
-        context.secure.put(Settings.Secure.ACCESSIBILITY_ENABLED,"0");
-        BootRecovery.restore(context);
-        check(master(context)==0 && context.writes==0,"Old-boot snapshot cannot authorize recovery");
+        check(BootRecovery.wanted(context) && !BootRecovery.active(context),
+            "Automatic recovery defaults on and waits for the secure-settings grant");
+        context.permission = 0;
+        check(BootRecovery.active(context),"Grant enables the default setting");
+        bar(context).edit().putBoolean(BootRecovery.OPTION,false).commit();
+        BootRecovery.lockedBoot(context);
+        check(!BootRecovery.active(context) && context.observers.isEmpty() && context.notices==0,
+            "A saved patch2 opt-out still skips recovery");
+        bar(context).edit().putBoolean(BootRecovery.TEMP_OPTION,true).commit();
+        check(BootRecovery.active(context),"A newer test-build choice takes precedence");
+        bar(context).edit().putBoolean(BootRecovery.OPTION,true).putBoolean(BootRecovery.TEMP_OPTION,false).commit();
+        check(!BootRecovery.active(context),"A test-build opt-out is preserved");
+        BootRecovery.setActive(context,true);
+        check(!bar(context).contains(BootRecovery.TEMP_OPTION) && BootRecovery.active(context),
+            "Explicit changes use the stable preference");
+        BootRecovery.unlockedBoot(context);
+        check(context.observers.isEmpty() && context.notices==0,"Same boot stays consumed after opting in");
 
+        context.bootCount++;
+        context.permission = -1;
+        context.credentialLocked = true;
+        BootRecovery.lockedBoot(context);
+        check(context.unlock != null && context.observers.isEmpty(),"Only an unlock listener before credential unlock");
+        check(BootRecovery.capturedBoot(context)==context.bootCount,"Pre-unlock records delivery in device storage");
+        context.credentialLocked = false;
+        context.unlock.onReceive(context,new android.content.Intent());
+        check(context.unlock==null && context.observers.size()==2 && android.os.Handler.pending()==1,
+            "Unlock starts one observer and one deadline without secure-settings permission");
+        check(context.notice && context.notices==1,"Missing service is reported from the initial snapshot");
+        BootRecovery.unlockedBoot(context);
+        check(context.notices==1 && android.os.Handler.pending()==1,"Duplicate boot delivery does not restart or notify");
+        check(master(context)==0 && context.writes==0
+            && OTHER.equals(context.secure.get(Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES)),
+            "An opted-in app cannot restore without secure-settings permission");
+        context.secure.put(Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES,OTHER+":"+BootRecovery.SERVICE);
+        context.secure.put(Settings.Secure.ACCESSIBILITY_ENABLED,"1");
+        context.observers.get(Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES).onChange(false);
+        BarService.bound = true;
+        BootRecovery.serviceChanged();
+        android.os.Handler.finishWindow();
+        check(context.observers.isEmpty() && android.os.Handler.pending()==0 && context.notices==1,
+            "Connection changes do not repost and the deadline clears observer and handler");
+        BootRecovery.unlockedBoot(context);
+        check(context.observers.isEmpty(),"Same boot does not start again after deadline");
+
+        context.bootCount++;
+        context.permission = 0;
+        BootRecovery.unlockedBoot(context);
+        check(context.observers.size()==2 && context.notices==1,"A healthy service can be watched without posting");
+        context.secure.put(Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES,OTHER);
+        BarService.bound = false;
+        context.observers.get(Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES).onChange(false);
+        check(context.notices==1 && context.writes==1 && master(context)==1
+            && (OTHER+":"+BootRecovery.SERVICE).equals(context.secure.get(Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES)),
+            "Settings observer restores its own entry while keeping other services");
+        context.secure.put(Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES,OTHER);
+        context.secure.put(Settings.Secure.ACCESSIBILITY_ENABLED,"0");
+        context.observers.get(Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES).onChange(false);
+        check(context.notices==2 && context.writes==1 && master(context)==0,
+            "Second disable in the same boot is reported without another write");
+        BootRecovery.setActive(context,false);
+        check(context.observers.isEmpty() && android.os.Handler.pending()==0 && !context.notice,
+            "Opting out stops the active window and clears its notification");
+
+        context.bootCount++;
+        BootRecovery.setActive(context,true);
+        bar(context).edit().putBoolean("overlay_mode",true).commit();
+        BootRecovery.unlockedBoot(context);
+        check(context.observers.isEmpty(),"Overlay startup does not watch accessibility");
+
+        context.bootCount++;
+        bar(context).edit().putBoolean("overlay_mode",false).remove(BootRecovery.OPTION).commit();
+        BootRecovery.unlockedBoot(context);
+        check(context.writes==3 && master(context)==1 && BarService.accessibilityRegistered(context),
+            "The default setting restores both missing settings once per boot");
+        android.os.Handler.finishWindow();
+        check(context.notices==3 && context.observers.isEmpty(),"Still unbound at the deadline is reported");
+
+        context.bootCount++;
+        context.secure.put(Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES,OTHER+":"+BootRecovery.SERVICE);
+        context.secure.put(Settings.Secure.ACCESSIBILITY_ENABLED,"0");
+        BootRecovery.unlockedBoot(context);
+        check(context.notices==3 && context.writes==3,"A master switch change alone does not consume the restore attempt");
+        context.secure.put(Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES,OTHER);
+        context.failIntWrites = 1;
+        context.observers.get(Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES).onChange(false);
+        check(context.notices==4 && context.writes==5 && master(context)==0,
+            "A later removal can restore the entry and reports a refused master switch write");
+        android.os.Handler.finishWindow();
+        check(context.writes==5 && context.observers.isEmpty(),"Deadline never retries a refused write");
         Context initial = new Context();
         initial.secure.put(BarGesture.GESTURE_KEY,"1");
         initial.beforeWrite = () -> check(bar(initial).getInt(BarGesture.ORIGINAL,-1)==1

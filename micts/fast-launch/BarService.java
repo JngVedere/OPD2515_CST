@@ -104,7 +104,10 @@ public final class BarService extends AccessibilityService {
      */
     static final String OVERLAY_MODE = "overlay_mode";
     static boolean overlayMode(Context context) { return prefs(context).getBoolean(OVERLAY_MODE, false); }
-    static void setOverlayMode(Context context, boolean on) { prefs(context).edit().putBoolean(OVERLAY_MODE, on).apply(); }
+    static void setOverlayMode(Context context, boolean on) {
+        prefs(context).edit().putBoolean(OVERLAY_MODE, on).apply();
+        if (on) BootRecovery.stop(context);
+    }
     /** Main thread: true while accessibility holds this service, false while it runs as a started service (overlay mode). */
     private boolean bound;
     /** Overlay mode: windows added without the accessibility window token. */
@@ -297,6 +300,7 @@ public final class BarService extends AccessibilityService {
 
     static void stop(Context context) {
         prefs(context).edit().putBoolean("enabled", false).apply();
+        BootRecovery.stop(context);
         running = false;
         if (instance != null) { instance.cancelPending(); instance.detach(); instance.configure(); }
         if (!BarGesture.restore(context)) android.widget.Toast.makeText(context,
@@ -362,11 +366,17 @@ public final class BarService extends AccessibilityService {
 
     static boolean granted(Context context) {
         if (overlayMode(context)) return Settings.canDrawOverlays(context);
+        return accessibilityRegistered(context);
+    }
+
+    static boolean accessibilityRegistered(Context context) {
         // The manager's enabled-service API can omit an approved service while
         // it is being rebound. Approval and live readiness are separate states.
         return BootRecovery.containsOwn(Settings.Secure.getString(context.getContentResolver(),
             Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES));
     }
+
+    static boolean accessibilityBound() { return instance != null && instance.bound; }
 
     private final Runnable longPress = () -> {
         if (holdFired || moved || target == null || nativeNow()) return;
@@ -533,6 +543,7 @@ public final class BarService extends AccessibilityService {
 
     private void notifyState() {
         if (instance != this) return;
+        BootRecovery.serviceChanged();
         configure();
         sendBroadcast(new Intent(STATE_CHANGED).setPackage(getPackageName()));
     }
@@ -813,6 +824,7 @@ public final class BarService extends AccessibilityService {
         bound = true;
         detach(); // re-added as an accessibility overlay
         prefs(this).edit().putBoolean(BootRecovery.APPROVED, true).apply();
+        Alerts.accessibilityRestored(this);
         begin();
     }
 
@@ -956,6 +968,7 @@ public final class BarService extends AccessibilityService {
     @Override public void onDestroy() {
         if (instance == this) instance = null;
         powerRequest++;
+        BootRecovery.serviceChanged();
         handler.removeCallbacks(warm);
         handler.removeCallbacks(logCheck);
         handler.removeCallbacks(autoRetry);
@@ -977,6 +990,7 @@ public final class BarService extends AccessibilityService {
 
     @Override public boolean onUnbind(Intent intent) {
         bound = false;
+        BootRecovery.serviceChanged();
         // Overlay mode keeps running as a started service: the touch area comes back as an app overlay.
         if (overlayMode(this) && instance == this) {
             handler.post(() -> { detach(); configure(); });

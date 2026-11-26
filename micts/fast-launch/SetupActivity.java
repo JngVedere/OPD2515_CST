@@ -104,7 +104,6 @@ public final class SetupActivity extends Activity {
         // (device: a blank "Circle-to-Search Trigger" card next to 더 어둡게).
         if (state == null && dimTilePressed(getIntent())) { finishAndRemoveTask(); return; }
         preferences = getSharedPreferences("bar", MODE_PRIVATE);
-        Tweaks.applyDefaults(this);
         // Hidden from recents by the task flag, not the manifest: a manifest excludeFromRecents makes ColorOS drop "잠금"
         // from the card menu even while the card is shown (device), so the user could not lock the app.
         applyRecentVisibility();
@@ -647,6 +646,10 @@ public final class SetupActivity extends Activity {
         if (!checked) return;
         // The capsule also needs this app's Live Updates switch (ColorOS: off by default); open it when it is off.
         if (Alerts.ISLAND.equals(key) && Build.VERSION.SDK_INT >= 36 && !Alerts.islandAllowed(this)) { openPromotionSettings(); return; }
+        ensureNotificationPermission();
+    }
+
+    private void ensureNotificationPermission() {
         if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED)
             requestPermissions(new String[]{android.Manifest.permission.POST_NOTIFICATIONS}, NOTIFY_REQUEST);
         else if (!getSystemService(android.app.NotificationManager.class).areNotificationsEnabled()) openNotificationSettings();
@@ -1333,14 +1336,17 @@ public final class SetupActivity extends Activity {
         bootSwitch = toggle("재부팅 후 자동 복구", BootRecovery.active(this), (view, checked) -> {
             if (syncing) return;
             if (checked && !BootRecovery.permitted(this)) {
-                ((Switch) view).setChecked(false);
-                Toast.makeText(this, "권한이 필요합니다.\n홈 → 추가 안내의\n최초 ADB 설정 안내를 확인해주세요.", Toast.LENGTH_LONG).show();
+                setSynced((Switch) view, false);
+                Toast.makeText(this, "보안 설정 쓰기 권한이 필요합니다.\n최초 ADB 설정 안내를 확인해주세요.",
+                    Toast.LENGTH_LONG).show();
                 return;
             }
-            preferences.edit().putBoolean(BootRecovery.OPTION, checked).apply();
+            BootRecovery.setActive(this, checked);
+            if (checked) ensureNotificationPermission();
         });
-        text("직접 켜 두었던 이 앱의 접근성이 재부팅 후 꺼져 있으면 다시 켭니다.\n"
-            + "보안 설정 쓰기 권한이 필요합니다.", 14);
+        text("재부팅 후 처음 잠금을 풀면 30초간 이 앱의 접근성 연결을 확인합니다.\n"
+            + "접근성 목록에서 이 앱이 빠지면 보안 설정 쓰기 권한으로 한 번 다시 등록합니다. "
+            + "연결에 실패하면 알림을 표시합니다.", 14);
         toggle("자동 회전 제안 끄기", !Tweaks.secureOn(this, Tweaks.ROTATION_SUGGESTIONS, true),
             (view, checked) -> tweakSecure(view, Tweaks.ROTATION_SUGGESTIONS, !checked, checked));
         text("화면을 돌렸을 때 모서리에 뜨는 회전 버튼을 숨깁니다.", 14);
@@ -1387,7 +1393,7 @@ public final class SetupActivity extends Activity {
         int checked = -1;
         for (int i = 0; i < labels.length; i++) {
             int hz = Tweaks.REFRESH_RATES[i];
-            labels[i] = hz == 0 ? "자동 (ColorOS가 화면에 맞춰 조절)" : hz + "Hz" + (hz == 144 ? " (게임 등 지원 앱에서만 144Hz)" : "");
+            labels[i] = hz == 0 ? "자동" : hz + "Hz" + (hz == 144 ? " (게임 등 지원 앱에서만 144Hz)" : "");
             if (hz == current) checked = i;
         }
         new AlertDialog.Builder(this).setTitle("전역 최대 주사율 설정")
@@ -2159,13 +2165,14 @@ public final class SetupActivity extends Activity {
         SharedPreferences.Editor edit = preferences.edit();
         for (String key : new String[]{BarService.MODE, BarService.POWER, BarService.POWER_LOCKED, BarService.POWER_DOUBLE,
                 BarService.POWER_DOUBLE_TARGET, BarService.POWER_DOUBLE_LABEL, BarService.TOUCH_APPS_ON, BarService.TOUCH_APPS,
-                BarService.FAST_RECOVER, BootRecovery.OPTION, MainActivity.TARGET_COMPONENT, MainActivity.TARGET_LABEL,
+                BarService.FAST_RECOVER, BootRecovery.OPTION, BootRecovery.TEMP_OPTION, MainActivity.TARGET_COMPONENT, MainActivity.TARGET_LABEL,
                 DrawerActivity.ACTION, TouchArea.HOLD_KEY, TouchArea.SETTLE_KEY, Alerts.ISLAND, Alerts.LOG, Alerts.UPDATE,
                 UPDATE_AUTO, UPDATE_BETA, COMPACT, "show_area", "show_recent"})
             edit.remove(key);
         for (boolean landscape : new boolean[]{false, true})
             for (String field : TouchArea.FIELDS) edit.remove(TouchArea.key(landscape, field));
         edit.apply();
+        BootRecovery.stop(this);
         Tweaks.resetDefaults(this);
         getPackageManager().setComponentEnabledSetting(new ComponentName(this, MainActivity.DRAWER),
             PackageManager.COMPONENT_ENABLED_STATE_ENABLED, PackageManager.DONT_KILL_APP); // 앱 서랍에 표시: on

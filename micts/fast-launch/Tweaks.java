@@ -12,8 +12,7 @@ import android.util.Log;
 /**
  * Optional system tweaks under 설정 → 고급 (user request; the same switches the 欢太工具箱 app offers, written here with this
  * app's own WRITE_SECURE_SETTINGS instead of a shell). Every key written is listed in this class and pinned by the
- * security test; nothing is written unless the user flips the matching switch or resets all settings, except the one
- * default in applyDefaults and reapply, which only re-writes values the user already chose here.
+ * security test. Switches are changed through user input or a settings reset, and saved choices can be reapplied at boot.
  * Not possible without a shell (no permission an app can hold): freezing the OPPO installer page (com.oplus.appdetail),
  * which shows the ADB command instead. The refresh rate goes through ColorOS's own Secure key, not the private System
  * keys. The System UI Tuner opens through TUNER_ALIAS.
@@ -159,15 +158,6 @@ final class Tweaks {
     static boolean setExtraDim(Context context, boolean on) { return setSecure(context, EXTRA_DIM, on); }
 
     /**
-     * 시스템 최적화 비활성화 항목 표시 is on by default (user request): written once, as soon as this app may write it
-     * (until then setSecure fails and nothing is remembered, so the next open tries again). The other switches default
-     * to the system's own values, so they need no write.
-     */
-    static void applyDefaults(Context context) {
-        if (!prefs(context).contains(STATE + SYSTEM_OPT)) setSecure(context, SYSTEM_OPT, true);
-    }
-
-    /**
      * After a reboot: puts back the switches the user set in this app. Device (0.4.1-patch2): ColorOS resets
      * clock_seconds to 0 at every boot while the switch, which shows what this app last wrote, still read "on".
      * Only values this app wrote are re-applied; Extra Dim is left to Android's own "keep on after restart" option.
@@ -187,7 +177,7 @@ final class Tweaks {
     static void resetDefaults(Context context) {
         setSecure(context, ROTATION_SUGGESTIONS, true); // rotation button shown again = '자동 회전 제안 끄기' off
         setSecure(context, CLOCK_SECONDS, false);
-        setSecure(context, SYSTEM_OPT, true);
+        setSecure(context, SYSTEM_OPT, false);
         setAnimationScale(context, 1f);
     }
 
