@@ -63,8 +63,8 @@ OpdCTS는 ColorOS에서 Google Circle to Search와 Gemini Assistant를 편리하
 
 ### 필요한 앱
 
-- **[Google](https://play.google.com/store/apps/details?id=com.google.android.googlequicksearchbox)** — Circle to Search 및 Gemini 실행
-- **[Google Speech Recognition & Synthesis](https://play.google.com/store/search?q=google+speech+services&c=apps)** — 호환성을 위해 설치 권장
+- **[Google(필수)](https://play.google.com/store/apps/details?id=com.google.android.googlequicksearchbox)** — Circle to Search 및 Gemini 실행
+- **[Google Speech Recognition & Synthesis(선택)](https://play.google.com/store/search?q=google+speech+services&c=apps)** — Gemini 음성으로 검색
 
 Google 서비스가 없는 기기는 Google 서비스와 Play 스토어를 먼저 준비해 주세요.
 
