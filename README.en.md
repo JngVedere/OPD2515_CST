@@ -172,13 +172,13 @@ ADB must be added to your PATH or otherwise be available from PowerShell.
 4. Enable **Disable system optimization** in Developer options, then press Enter in PowerShell.
 5. When prompted to allow device log access, select **Allow one-time access**. If the prompt does not appear, tap the log connection prompt within OpdCTS.
 6. Press Enter in PowerShell. Once the automated setup finishes, the script attempts to launch Google Assistant for the first time.
-7. Go to **Settings → Apps → Auto launch** and allow Circle-to-Search Trigger.
+7. Go to **Settings → Apps → Auto launch** and allow OpdCTS.
 8. In OpdCTS settings, open **the Recents cleanup exclusion settings** and lock the app card in Recents.
 
 Setup is complete once you have finished all the steps above.
 
 - After locking the app in Recents, you can turn off **Show in Recents** in OpdCTS to hide its settings screen from the recent apps list.
-- If needed, go to Settings → Apps → Associated launch and allow Circle-to-Search Trigger (optional).
+- If needed, go to Settings → Apps → Associated launch and allow OpdCTS (optional).
 
 [View the ADB setup script](./scripts/adb_setup.ps1)
 
@@ -200,9 +200,9 @@ You can reopen OpdCTS settings in any of the following ways:
 
 - Tap the OpdCTS icon in the app drawer.
 - Press and hold the OpdCTS icon → Settings.
-- Settings → Apps → App management → Circle-to-Search Trigger → Additional settings in the app.
-- Settings → Accessibility → Downloaded apps → Circle-to-Search Trigger → Settings.
-- Press and hold the Circle-to-Search Trigger tile in Quick Settings.
+- Settings → Apps → App management → OpdCTS → Additional settings in the app.
+- Settings → Accessibility → Downloaded apps → OpdCTS → Settings.
+- Press and hold the OpdCTS tile in Quick Settings.
 
 <br>
 
@@ -273,10 +273,10 @@ Replace the filename with the name of the APK you downloaded.
 
 **Q. The accessibility service is grayed out or access is denied.**
 
-1. Open Settings → Apps → App management → Circle-to-Search Trigger.
+1. Open Settings → Apps → App management → OpdCTS.
 2. Select **Allow restricted settings** from the menu in the upper-right corner.
 3. Authenticate using your screen lock.
-4. Enable Circle-to-Search Trigger in Accessibility settings.
+4. Enable OpdCTS in Accessibility settings.
 
 If the menu is missing, try enabling the accessibility service once, then reopen the app info screen.
 

@@ -187,13 +187,13 @@ curl -fsSL https://raw.githubusercontent.com/JngVedere/OPD2515_CST/main/scripts/
 </details>
 
 4. 터미널에 뜨는 안내에 따라 설정을 진행합니다.
-5. **설정 → 앱 → 자동 실행**에서 Circle-to-Search Trigger를 허용합니다.
+5. **설정 → 앱 → 자동 실행**에서 OpdCTS를 허용합니다.
 6. OpdCTS 설정에서 **최근 앱 정리 제외 설정**을 열고 앱 카드를 잠급니다.
 
 위 절차를 모두 완료하면 설정이 끝납니다.
 
 - 최근 앱을 잠근 뒤 OpdCTS의 **최근 앱에 표시**를 끄면 설정 화면을 최근 앱 목록에서 숨길 수 있습니다.
-- 필요한 경우 설정 → 앱 → 관련 실행에서 Circle-to-Search Trigger를 허용할 수 있습니다. (선택 사항)
+- 필요한 경우 설정 → 앱 → 관련 실행에서 OpdCTS를 허용할 수 있습니다. (선택 사항)
 
 [ADB 설정 스크립트 원본 보기](./scripts/adb_setup.ps1)
 
@@ -216,9 +216,9 @@ ADB 원클릭 설정을 사용하지 않거나 원하는 기능만 활성화하�
 
 - 앱 서랍의 OpdCTS 아이콘 누르기
 - OpdCTS 아이콘 길게 누르기 → 설정
-- 설정 → 앱 → 앱 관리 → Circle-to-Search Trigger → 앱 추가 설정
-- 설정 → 접근성 → 다운로드한 앱 → Circle-to-Search Trigger → 설정
-- 빠른 설정의 Circle-to-Search Trigger 타일 길게 누르기
+- 설정 → 앱 → 앱 관리 → OpdCTS → 앱 추가 설정
+- 설정 → 접근성 → 다운로드한 앱 → OpdCTS → 설정
+- 빠른 설정의 OpdCTS 타일 길게 누르기
 
 <br>
 
@@ -289,10 +289,10 @@ adb install Circle-to-Search-Trigger-0.4.0.apk
 
 **Q. 접근성 서비스가 회색으로 표시되거나 액세스가 거부됩니다.**
 
-1. 설정 → 앱 → 앱 관리 → Circle-to-Search Trigger를 엽니다.
+1. 설정 → 앱 → 앱 관리 → OpdCTS를 엽니다.
 2. 우측 상단 메뉴에서 **제한된 설정 허용**을 선택합니다.
 3. 화면 잠금 인증을 완료합니다.
-4. 접근성 설정에서 Circle-to-Search Trigger를 활성화합니다.
+4. 접근성 설정에서 OpdCTS를 활성화합니다.
 
 메뉴가 보이지 않으면 접근성 활성화를 한 번 시도한 뒤 앱 정보 화면을 다시 열어 주세요.
 
