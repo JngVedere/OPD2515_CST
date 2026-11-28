@@ -287,7 +287,7 @@ final class LogTrigger {
         return wanted && permission && !live && !bridgeShowing && interactive && !locked && !declined && attempts < AUTO_PROMPTS;
     }
 
-    /** Accepted power press to delayed Gemini request: covers the rebind (350 ms), settle (500 ms) and scheduling slack. */
+    /** Accepted power press to delayed Gemini request: covers the rebind (VoiceRepair.UNBOUND_MS), the longest settle and scheduling slack. */
     static final long POWER_LAUNCH_AGE = 3000;
 
     /**

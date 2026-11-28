@@ -20,8 +20,18 @@ import java.util.concurrent.atomic.AtomicBoolean;
  */
 final class VoiceRepair {
     static final String KEY = "voice_interaction_service", PENDING = "voice_repair_original";
-    /** Unbound window proven on device (350 ms); the system rebinds after the exact value returns. */
-    static final long UNBOUND_MS = 350;
+    /**
+     * Unbound window. Device (OPD2515, 2026-11-28, app-side clear): Google's service logged onDestroy 1-6 ms after the
+     * clear, then onCreate/onReady right after the restore, with a new binding every time from 5 ms up (21/21); at 0 ms
+     * the restore came first and nothing was rebound (0/3). 50 ms keeps a margin for a busy system (was 350 ms).
+     */
+    static final long UNBOUND_MS = 50;
+    /**
+     * Device (2026-11-29, first press after reboot): voice_interaction_service had drifted, the press-time resync bound
+     * Google cold and a request 36ms later failed inside Google ("invocation propagation failed"); its session side was
+     * up ~230ms after the write. A resync at press time therefore waits this long before the request.
+     */
+    static final long RESYNC_SETTLE_MS = 800;
     /** Default settle after the restore (no readiness signal without polling); the user can raise it (TouchArea.SETTLE_KEY). */
     static final long SETTLE_MS = TouchArea.SETTLE;
     private static final String TAG = "PadVoice", GOOGLE = "com.google.android.googlequicksearchbox/";
@@ -118,6 +128,13 @@ final class VoiceRepair {
     static int prepare(Context context) {
         if (busy()) return BUSY; // Another rebind owns the selection right now.
         if (!finish(context)) return RESTORE_PENDING; // An earlier failed restore must put the exact original back first; fail closed.
+        boolean drifted;
+        try { drifted = !googleSelected(Settings.Secure.getString(context.getContentResolver(), KEY)); }
+        catch (RuntimeException unreadable) { drifted = false; }
+        if (drifted && resync(context)) { // A fresh bind stands in for the rebind; Google starts cold, so wait longer.
+            try { Thread.sleep(RESYNC_SETTLE_MS); return REBOUND; }
+            catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); return INTERRUPTED; }
+        }
         if (!activationWanted(context, true)) return writable(context) ? NOT_GOOGLE : NO_WSS;
         if (!run(context)) return NOT_RESTORED;
         try { Thread.sleep(settle(context)); return REBOUND; }

@@ -14,7 +14,8 @@ final class TouchArea {
      * or the start of a home swipe counts as a hold (the settings text warns about it); a finger that moves past the
      * touch slop still never triggers. A value the user saved is kept; only an unset value follows the default.
      */
-    static final int HOLD = 195, MIN_HOLD = 50, MAX_HOLD = 1000;
+    /** WARN_HOLD: below this the settings show a warning (ordinary taps last about 100 ms; Android's TAP_TIMEOUT is 100 ms). */
+    static final int HOLD = 195, MIN_HOLD = 100, WARN_HOLD = 150, MAX_HOLD = 1000;
     /** Wait after the Google rebind before Gemini is requested (VoiceRepair). Bounded well under POWER_LAUNCH_AGE. */
     static final int SETTLE = 20, MAX_SETTLE = 1000;
     static final String HOLD_KEY = "hold_ms", SETTLE_KEY = "gemini_settle_ms";

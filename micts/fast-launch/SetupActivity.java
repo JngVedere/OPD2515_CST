@@ -26,6 +26,7 @@ public final class SetupActivity extends Activity {
     static final String TASKBAR = "enable_launcher_taskbar";
     private static final int ERROR_COLOR = 0xFFD93025;
     private TextView status, logStatus, powerStatus, doubleStatus, recentStatus, targetLabel, doubleLabel;
+    private Button startButton;
     private int secondary;
     /** Theme primary text colour with its disabled state, so a disabled slider label looks disabled. */
     private android.content.res.ColorStateList primary;
@@ -104,10 +105,11 @@ public final class SetupActivity extends Activity {
         // (device: a blank "Circle-to-Search Trigger" card next to 더 어둡게).
         if (state == null && dimTilePressed(getIntent())) { finishAndRemoveTask(); return; }
         preferences = getSharedPreferences("bar", MODE_PRIVATE);
+        waitingAutoStart = state != null && state.getBoolean(WAITING_AUTO_START);
         // Hidden from recents by the task flag, not the manifest: a manifest excludeFromRecents makes ColorOS drop "잠금"
         // from the card menu even while the card is shown (device), so the user could not lock the app.
         applyRecentVisibility();
-        setTitle("Circle-to-Search Trigger");
+        setTitle(getApplicationInfo().loadLabel(getPackageManager()));
         if (getActionBar() != null) getActionBar().hide();
         // ColorOS-style surfaces (user request, like 欢太工具箱): light gray page, plain rounded cards, no outlines.
         night = (getResources().getConfiguration().uiMode & android.content.res.Configuration.UI_MODE_NIGHT_MASK)
@@ -156,7 +158,7 @@ public final class SetupActivity extends Activity {
         colors.recycle();
         buildNavBar(state != null && state.getBoolean(TAB_SETTINGS, false));
         // Title row: app name on the left, the Detail / Compact switch for the card descriptions at the right end.
-        TextView title = text("Circle-to-Search Trigger", 30);
+        TextView title = text(getApplicationInfo().loadLabel(getPackageManager()).toString(), 30);
         title.setTypeface(null, android.graphics.Typeface.BOLD);
         title.setTextColor(night ? 0xFFF2F2F2 : 0xFF1C1C1E);
         body.removeView(title);
@@ -231,7 +233,7 @@ public final class SetupActivity extends Activity {
         LinearLayout.LayoutParams cardParams = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         cardParams.topMargin = dp(8); cardParams.bottomMargin = dp(12);
         body.addView(card, cardParams);
-        button("사용 시작", this::begin);
+        startButton = button("사용 시작", this::begin);
         button("끄기", () -> { BarService.stop(this); refresh(); });
 
         section("실행 방식");
@@ -350,6 +352,15 @@ public final class SetupActivity extends Activity {
         holdSlider = slider("길게 누르기 인식 시간", "ms", TouchArea.MIN_HOLD, TouchArea.MAX_HOLD, 5, true, value -> {
             preferences.edit().putInt(TouchArea.HOLD_KEY, value).apply();
         });
+        // Shown only below WARN_HOLD (Slider.render): a yellow sign next to the value and this line under the slider.
+        holdSlider.warning = text("", 14);
+        details.remove(holdSlider.warning); // a warning, not a description: also shown in Compact
+        SpannableStringBuilder holdWarning = new SpannableStringBuilder();
+        span(holdWarning, "⚠ ", new ForegroundColorSpan(Slider.WARN_COLOR), new StyleSpan(android.graphics.Typeface.BOLD));
+        span(holdWarning, TouchArea.WARN_HOLD + "ms보다 짧으면 일반 터치를 길게 누르기로 잘못 인식하는 등 정상적으로 동작하지 않을 수 있습니다.",
+            new ForegroundColorSpan(Slider.WARN_COLOR));
+        holdSlider.warning.setText(holdWarning);
+        holdSlider.warnBelow = TouchArea.WARN_HOLD;
         text("짧을수록 빨리 열립니다.\n"
             + "너무 짧으면 일반 터치나 홈 제스처를 길게 누르기로 잘못 인식할 수 있습니다.\n"
             + "기본값은 " + TouchArea.HOLD + "ms입니다.", 14);
@@ -382,7 +393,6 @@ public final class SetupActivity extends Activity {
             refresh();
         });
         text("화면이 꺼졌거나 잠겨 있어도 전원 버튼으로 Gemini Assistant를 엽니다.\n"
-            + "잠금을 풀거나 우회하지 않습니다.\n"
             + "잠긴 상태에서는 화면 내용과 스크린샷을 보내지 않습니다.\n"
             + "Gemini의 잠금 화면 설정이 필요할 수 있습니다.\n"
             + "재부팅 후에는 첫 잠금 해제와 기기 로그 승인 뒤부터 동작합니다.", 14);
@@ -390,7 +400,7 @@ public final class SetupActivity extends Activity {
         settleSlider = slider("Gemini 요청 전 대기", "ms", 0, TouchArea.MAX_SETTLE, 5, false, value -> {
             preferences.edit().putInt(TouchArea.SETTLE_KEY, value).apply();
         });
-        text("전원 버튼을 누르면 Google 음성 연결을 다시 잡습니다(약 0.35초).\n"
+        text("전원 버튼을 누르면 Google 음성 연결을 다시 잡습니다(약 0.05초).\n"
             + "그 뒤 이 시간만큼 더 기다렸다가 Gemini Assistant를 요청합니다.\n"
             + "가끔 뜨지 않으면 늘리고, 더 빨리 뜨게 하려면 줄이세요.\n"
             + "기본값은 " + TouchArea.SETTLE + "ms입니다.", 14);
@@ -402,8 +412,7 @@ public final class SetupActivity extends Activity {
         divider(section);
         button("Google 음성 연결 다시 시작", this::repairVoice);
         text("Gemini Assistant가 뜨지 않을 때 눌러주세요.\n"
-            + "선택된 Google 음성 서비스를 약 0.35초 해제했다가 다시 연결합니다.\n"
-            + "다른 어시스턴트로 바꾸지 않습니다.\n"
+            + "선택된 Google 음성 서비스를 약 0.05초 해제했다가 다시 연결합니다.\n"
             + "보안 설정 쓰기 권한이 있으면 전원 버튼을 누를 때마다 자동으로 실행됩니다.", 14);
 
         section("최근 앱");
@@ -474,19 +483,18 @@ public final class SetupActivity extends Activity {
             + "베타를 설치한 뒤 끄면, 더 높은 정식 버전이 나올 때 업데이트됩니다.", 14);
         divider(section);
         button("업데이트 확인", this::checkUpdate);
-        text("GitHub에서 새 버전 정보만 받아오며, 기기 정보는 보내지 않습니다.\n"
-            + "새 버전은 파일을 검증한 뒤 Android 설치 화면으로 설치합니다.\n"
+        text("Github에서 새로운 버전을 확인합니다.\n"
             + "처음 한 번은 '출처를 알 수 없는 앱 설치'를 허용해야 합니다.\n"
-            + "업데이트 후에는 기기 로그 승인을 다시 해야 합니다.", 14);
+            + "업데이트 후에는 기기 로그 승인을 다시 해야 합니다."
+            + "기기 정보를 외부로 보내지 않습니다.", 14);
         section("알림");
         // Small "테스트" button beside the switch instead of a full-width button (user request).
         islandAlert = toggle("카메라 섬에도 표시", Alerts.wanted(this, Alerts.ISLAND),
             (view, checked) -> alertChanged(Alerts.ISLAND, checked), "테스트", this::testIsland);
-        text("기기 로그 알림을 카메라 옆 캡슐(라이브 알림)에도 띄웁니다.\n"
-            + "필요한 것:\n"
-            + "· 이 앱 알림 설정의 '라이브 알림에 라이브 업데이트 표시'\n"
-            + "· '기기 로그 권한이 없을 때 알림 받기'\n"
-            + "캡슐에 뜬 알림은 기기 로그가 다시 연결될 때까지 지울 수 없습니다.\n"
+        text("기기 로그와 재부팅 후 접근성 복구 실패 알림을 카메라 옆 캡슐에도 띄웁니다.\n"
+            + "이 앱 알림 설정에서 '라이브 알림에 라이브 업데이트 표시'를 켜주세요.\n"
+            + "기기 로그 알림은 아래 스위치가 켜져 있을 때 표시됩니다.\n"
+            + "기기 로그 또는 접근성이 다시 연결되면 해당 알림이 사라집니다.\n"
             + "'테스트'를 누르면 10초간 테스트 알림을 보냅니다.\n"
             + "이 앱이 앞에 있으면 섬이 보이지 않아, 이 화면이 부동창으로 바뀝니다.\n"
             + "창을 누르면 다시 조작할 수 있습니다.", 14);
@@ -636,16 +644,18 @@ public final class SetupActivity extends Activity {
 
     private Switch logAlert, updateAlert, islandAlert;
     private static final int NOTIFY_REQUEST = 41;
+    private static final int FIRST_NOTIFY_REQUEST = 42, FIRST_LIVE_REQUEST = 43;
+    private static final String FIRST_ALERTS_ASKED = "first_alerts_asked";
 
-    /** Turning either alert on asks for the notification permission when it is missing (Android 13+). */
+    /** Turning an alert on asks for the notification permission when it is missing (Android 13+). */
     private void alertChanged(String key, boolean checked) {
         if (syncing) return;
         preferences.edit().putBoolean(key, checked).apply();
         Alerts.scheduleUpdateCheck(this);
-        if (Alerts.LOG.equals(key)) islandAlert.setEnabled(checked); // the capsule only carries the log alert
         if (!checked) return;
         // The capsule also needs this app's Live Updates switch (ColorOS: off by default); open it when it is off.
-        if (Alerts.ISLAND.equals(key) && Build.VERSION.SDK_INT >= 36 && !Alerts.islandAllowed(this)) { openPromotionSettings(); return; }
+        if (Alerts.ISLAND.equals(key) && Build.VERSION.SDK_INT >= 36 && !Alerts.islandAllowed(this)
+                && getSystemService(NotificationManager.class).areNotificationsEnabled()) { openPromotionSettings(); return; }
         ensureNotificationPermission();
     }
 
@@ -655,11 +665,58 @@ public final class SetupActivity extends Activity {
         else if (!getSystemService(android.app.NotificationManager.class).areNotificationsEnabled()) openNotificationSettings();
     }
 
+    private void requestFirstAlerts() {
+        if (preferences == null || isFinishing() || Build.VERSION.SDK_INT < 33
+                || preferences.getBoolean(FIRST_ALERTS_ASKED, false)) return;
+        preferences.edit().putBoolean(FIRST_ALERTS_ASKED, true).apply();
+        try {
+            android.content.pm.PackageInfo install = getPackageManager().getPackageInfo(getPackageName(), 0);
+            if (install.firstInstallTime != install.lastUpdateTime) return;
+        } catch (PackageManager.NameNotFoundException unavailable) { return; }
+        if (preferences.contains(Alerts.LOG) || preferences.contains(Alerts.UPDATE) || preferences.contains(Alerts.ISLAND)) return;
+        if (getSystemService(NotificationManager.class).areNotificationsEnabled()) enableFirstAlerts();
+        else if (checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED)
+            requestPermissions(new String[]{android.Manifest.permission.POST_NOTIFICATIONS}, FIRST_NOTIFY_REQUEST);
+    }
+
+    private void enableFirstAlerts() {
+        if (!getSystemService(NotificationManager.class).areNotificationsEnabled()) return;
+        preferences.edit().putBoolean(Alerts.LOG, true).putBoolean(Alerts.UPDATE, true).apply();
+        Alerts.scheduleUpdateCheck(this);
+        if (Alerts.islandAllowed(this)) preferences.edit().putBoolean(Alerts.ISLAND, true).apply();
+        else if (Build.VERSION.SDK_INT >= 36) {
+            showPhrased(new AlertDialog.Builder(this).setTitle("라이브 알림")
+                .setMessage("기기 로그와 접근성 복구 알림을 카메라 섬에도 표시하려면 시스템 설정에서 라이브 업데이트를 허용해주세요.")
+                .setPositiveButton("라이브 알림 설정", (dialog, which) -> openPromotionSettings(FIRST_LIVE_REQUEST))
+                .setNegativeButton("나중에", null));
+        }
+        syncAlertSwitches();
+    }
+
     /** This app's Live Updates switch ("라이브 알림에 라이브 업데이트 표시", ColorOS: off by default). */
-    private void openPromotionSettings() {
+    private void openPromotionSettings() { openPromotionSettings(-1); }
+
+    private void openPromotionSettings(int request) {
         Toast.makeText(this, "'라이브 알림에 라이브 업데이트 표시'를 켜주세요.", Toast.LENGTH_LONG).show();
-        try { startActivity(new Intent(Settings.ACTION_APP_NOTIFICATION_PROMOTION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, getPackageName())); }
-        catch (ActivityNotFoundException missing) { openNotificationSettings(); }
+        Intent promotion = notificationSettings(Settings.ACTION_APP_NOTIFICATION_PROMOTION_SETTINGS)
+            .putExtra(":settings:fragment_args_key", "shown_as_live_alert_enable_key"); // ColorOS switch row
+        try { startActivityForResult(promotion, request); }
+        catch (ActivityNotFoundException missing) {
+            try { startActivityForResult(notificationSettings(Settings.ACTION_APP_NOTIFICATION_SETTINGS), request); }
+            catch (ActivityNotFoundException unavailable) { openAppInfo(); }
+        }
+    }
+
+    private Intent notificationSettings(String action) {
+        return new Intent(action).putExtra(Settings.EXTRA_APP_PACKAGE, getPackageName());
+    }
+
+    @Override protected void onActivityResult(int request, int result, Intent data) {
+        super.onActivityResult(request, result, data);
+        if (request == FIRST_LIVE_REQUEST && Alerts.islandAllowed(this)) {
+            preferences.edit().putBoolean(Alerts.ISLAND, true).apply();
+            syncAlertSwitches();
+        }
     }
 
     /** Demo: a short-lived test notice in the camera island; sends the user to whatever is still missing first. */
@@ -727,12 +784,17 @@ public final class SetupActivity extends Activity {
 
     private void openNotificationSettings() {
         Toast.makeText(this, "알림이 꺼져 있습니다. 알림을 허용해주세요.", Toast.LENGTH_LONG).show();
-        try { startActivity(new Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, getPackageName())); }
+        try { startActivity(notificationSettings(Settings.ACTION_APP_NOTIFICATION_SETTINGS)); }
         catch (ActivityNotFoundException missing) { openAppInfo(); }
     }
 
     @Override public void onRequestPermissionsResult(int request, String[] permissions, int[] results) {
         super.onRequestPermissionsResult(request, permissions, results);
+        if (request == FIRST_NOTIFY_REQUEST) {
+            if (!isFinishing() && !isDestroyed() && results.length > 0 && results[0] == PackageManager.PERMISSION_GRANTED)
+                enableFirstAlerts();
+            return;
+        }
         if (request != NOTIFY_REQUEST || (results.length > 0 && results[0] == PackageManager.PERMISSION_GRANTED)) return;
         // Denied: the alerts cannot be shown, so both switch back off. Once Android stops asking, send the user to settings.
         preferences.edit().putBoolean(Alerts.LOG, false).putBoolean(Alerts.UPDATE, false).putBoolean(Alerts.ISLAND, false).apply();
@@ -757,14 +819,15 @@ public final class SetupActivity extends Activity {
         new Thread(() -> {
             AppUpdate.Release found = null;
             String error = null;
-            try { found = AppUpdate.check(app, beta); } catch (Exception failed) { error = failed.getClass().getSimpleName(); }
+            try { found = AppUpdate.check(app, beta); }
+            catch (Exception failed) { error = AppUpdate.checkFailureMessage(failed); }
             AppUpdate.Release release = found;
             String failure = error;
             runOnUiThread(() -> {
                 updating = false;
                 if (isFinishing() || isDestroyed()) return;
                 if (auto) { if (failure == null && release != null) showUpdateBanner(release); return; }
-                if (failure != null) Toast.makeText(this, "업데이트 정보를 가져오지 못했습니다 (" + failure + ").\n인터넷 연결을 확인해주세요.", Toast.LENGTH_LONG).show();
+                if (failure != null) Toast.makeText(this, failure, Toast.LENGTH_LONG).show();
                 else if (release == null) Toast.makeText(this, "최신 버전입니다.", Toast.LENGTH_SHORT).show();
                 else showPhrased(new AlertDialog.Builder(this).setTitle((release.beta ? "새 베타 버전 " : "새 버전 ") + release.version)
                     .setMessage((release.beta ? "베타 버전은 오류가 있을 수 있습니다.\n" : "")
@@ -956,7 +1019,7 @@ public final class SetupActivity extends Activity {
         fill.setCornerRadius(dp(12)); fill.setColor((accent & 0x00FFFFFF) | 0x26000000);
         copy.setBackground(fill);
         copy.setOnClickListener(v -> {
-            getSystemService(android.content.ClipboardManager.class).setPrimaryClip(ClipData.newPlainText("Circle-to-Search Trigger ADB 명령", command));
+            getSystemService(android.content.ClipboardManager.class).setPrimaryClip(ClipData.newPlainText("OpdCTS ADB 명령", command));
             Toast.makeText(this, "명령을 복사했습니다.", Toast.LENGTH_SHORT).show();
         });
         android.widget.FrameLayout.LayoutParams at = new android.widget.FrameLayout.LayoutParams(
@@ -1183,17 +1246,73 @@ public final class SetupActivity extends Activity {
         moveWell(settings, animate);
         if (!change) { springBack(); return; }
         int width = pageScroll.getWidth();
-        if (!animate || width == 0) { applyPage(settings); return; }
+        if (!animate || width == 0) {
+            Tween.cancel(pageTween);
+            pageScroll.setTranslationX(0); pageScroll.setAlpha(1f);
+            applyPage(settings);
+            return;
+        }
         float shift = width * 0.25f * (settings ? 1 : -1); // settings is to the right of home
-        pageScroll.animate().cancel();
-        pageScroll.animate().translationX(-shift).alpha(0f).setDuration(110)
-            .setInterpolator(new android.view.animation.AccelerateInterpolator()).withEndAction(() -> {
-                applyPage(settings);
-                pageScroll.setTranslationX(shift);
-                pageScroll.animate().translationX(0).alpha(1f).setDuration(200)
-                    .setInterpolator(new android.view.animation.DecelerateInterpolator()).start();
-            }).start();
+        float fromX = pageScroll.getTranslationX(), fromAlpha = pageScroll.getAlpha();
+        pageTween = Tween.start(pageTween, pageScroll, 110, new android.view.animation.AccelerateInterpolator(), f -> {
+            pageScroll.setTranslationX(fromX + (-shift - fromX) * f);
+            pageScroll.setAlpha(fromAlpha * (1 - f));
+        }, () -> {
+            applyPage(settings);
+            pageTween = Tween.start(null, pageScroll, 200, new android.view.animation.DecelerateInterpolator(), f -> {
+                pageScroll.setTranslationX(shift * (1 - f));
+                pageScroll.setAlpha(f);
+            }, null);
+        });
     }
+
+    /**
+     * In-app transitions on frame callbacks, so the device's animation scale (this app's own 애니메이션 배율 option or
+     * developer options) never shortens or skips them (user request). View.animate()/ValueAnimator multiply their duration
+     * by animator_duration_scale and end at once when it is 0. Main thread only.
+     */
+    private static final class Tween implements Runnable {
+        private final android.view.View host;
+        private final long duration;
+        private final android.animation.TimeInterpolator curve;
+        private final java.util.function.Consumer<Float> step;
+        private final Runnable end;
+        private long started = -1;
+        private boolean cancelled;
+
+        private Tween(android.view.View host, long duration, android.animation.TimeInterpolator curve,
+                java.util.function.Consumer<Float> step, Runnable end) {
+            this.host = host; this.duration = duration; this.curve = curve; this.step = step; this.end = end;
+        }
+
+        /** Cancels previous (if any) and starts a new tween on host; step receives the interpolated fraction 0..1. */
+        static Tween start(Tween previous, android.view.View host, long duration, android.animation.TimeInterpolator curve,
+                java.util.function.Consumer<Float> step, Runnable end) {
+            cancel(previous);
+            Tween tween = new Tween(host, duration, curve, step, end);
+            host.postOnAnimation(tween);
+            return tween;
+        }
+
+        static void cancel(Tween tween) {
+            if (tween == null) return;
+            tween.cancelled = true;
+            tween.host.removeCallbacks(tween);
+        }
+
+        @Override public void run() {
+            if (cancelled) return;
+            long now = android.os.SystemClock.uptimeMillis();
+            if (started < 0) started = now;
+            float t = Math.min(1f, (now - started) / (float) duration);
+            step.accept(curve.getInterpolation(t));
+            if (t < 1f) host.postOnAnimation(this);
+            else { cancelled = true; if (end != null) end.run(); }
+        }
+    }
+
+    private Tween pageTween, wellTween;
+    private final Tween[] tintTweens = new Tween[2];
 
     private void applyPage(boolean settings) {
         pageScroll.scrollTo(0, 0);
@@ -1204,27 +1323,36 @@ public final class SetupActivity extends Activity {
     /** Glides the well under the selected tab and fades the icon tints (selected: strong, other: gray). */
     private void moveWell(boolean settings, boolean animate) {
         float target = settings ? dp(TAB_WIDTH) : 0;
-        navWell.animate().cancel();
-        if (animate) navWell.animate().translationX(target).setDuration(260)
-            .setInterpolator(new android.view.animation.OvershootInterpolator(0.7f)).start();
-        else navWell.setTranslationX(target);
+        Tween.cancel(wellTween);
+        if (animate) {
+            float from = navWell.getTranslationX();
+            wellTween = Tween.start(null, navWell, 260, new android.view.animation.OvershootInterpolator(0.7f),
+                f -> navWell.setTranslationX(from + (target - from) * f), null);
+        } else navWell.setTranslationX(target);
         int strong = night ? 0xFFF2F2F2 : 0xFF1C1C1E;
-        for (android.widget.ImageView tab : new android.widget.ImageView[]{homeTab, settingsTab}) {
+        android.widget.ImageView[] tabs = {homeTab, settingsTab};
+        for (int i = 0; i < tabs.length; i++) {
+            android.widget.ImageView tab = tabs[i];
             boolean selected = (tab == settingsTab) == settings;
             tab.setSelected(selected);
             int to = selected ? strong : secondary;
             android.content.res.ColorStateList now = tab.getImageTintList();
+            Tween.cancel(tintTweens[i]);
             if (!animate || now == null) { tab.setImageTintList(android.content.res.ColorStateList.valueOf(to)); continue; }
-            android.animation.ValueAnimator fade = android.animation.ValueAnimator.ofArgb(now.getDefaultColor(), to);
-            fade.setDuration(200);
-            fade.addUpdateListener(a -> tab.setImageTintList(android.content.res.ColorStateList.valueOf((int) a.getAnimatedValue())));
-            fade.start();
+            int from = now.getDefaultColor();
+            android.animation.ArgbEvaluator argb = new android.animation.ArgbEvaluator();
+            tintTweens[i] = Tween.start(null, tab, 200, new android.view.animation.LinearInterpolator(),
+                f -> tab.setImageTintList(android.content.res.ColorStateList.valueOf((int) argb.evaluate(f, from, to))), null);
         }
     }
 
     private void springBack() {
-        if (pageScroll.getTranslationX() != 0) pageScroll.animate().translationX(0).alpha(1f).setDuration(180)
-            .setInterpolator(new android.view.animation.DecelerateInterpolator()).start();
+        if (pageScroll.getTranslationX() == 0 && pageScroll.getAlpha() == 1f) return;
+        float fromX = pageScroll.getTranslationX(), fromAlpha = pageScroll.getAlpha();
+        pageTween = Tween.start(pageTween, pageScroll, 180, new android.view.animation.DecelerateInterpolator(), f -> {
+            pageScroll.setTranslationX(fromX * (1 - f));
+            pageScroll.setAlpha(fromAlpha + (1 - fromAlpha) * f);
+        }, null);
     }
 
     // --- Swipe between the pages ----------------------------------------------------------------------------------
@@ -1256,7 +1384,7 @@ public final class SetupActivity extends Activity {
                     cancel.setAction(android.view.MotionEvent.ACTION_CANCEL);
                     super.dispatchTouchEvent(cancel); // the row or button under the finger stops being pressed
                     cancel.recycle();
-                    pageScroll.animate().cancel(); navWell.animate().cancel();
+                    Tween.cancel(pageTween); Tween.cancel(wellTween);
                 }
                 boolean toward = onSettingsPage ? dx > 0 : dx < 0; // only one other page in each direction
                 pageScroll.setTranslationX(dx * (toward ? 0.5f : 0.1f));
@@ -1272,11 +1400,12 @@ public final class SetupActivity extends Activity {
                 if (!was) return false;
                 float dx = event.getRawX() - swipeStartX;
                 boolean toward = onSettingsPage ? dx > 0 : dx < 0;
-                // Far enough (64dp or 15% of the width), or a quick flick (over 0.5dp per ms, at least 32dp).
+                // Far enough (52dp or 12% of the width), or a quick flick (over 0.5dp per ms, at least 26dp).
+                // Slightly shorter than before (64dp / 15% / 32dp, user request).
                 long took = Math.max(1, event.getEventTime() - swipeStartTime);
-                boolean flick = Math.abs(dx) > dp(32) && Math.abs(dx) / took > dp(1) * 0.5f;
+                boolean flick = Math.abs(dx) > dp(26) && Math.abs(dx) / took > dp(1) * 0.5f;
                 boolean go = event.getActionMasked() == android.view.MotionEvent.ACTION_UP && toward
-                    && (flick || Math.abs(dx) > Math.min(dp(64), pageScroll.getWidth() * 0.15f));
+                    && (flick || Math.abs(dx) > Math.min(dp(52), pageScroll.getWidth() * 0.12f));
                 switchPage(go != onSettingsPage, true); // not far enough: the same page again, which springs back
                 return true;
             }
@@ -1303,6 +1432,7 @@ public final class SetupActivity extends Activity {
     @Override protected void onSaveInstanceState(Bundle out) {
         super.onSaveInstanceState(out);
         out.putBoolean(TAB_SETTINGS, onSettingsPage);
+        out.putBoolean(WAITING_AUTO_START, waitingAutoStart);
     }
 
     // --- 고급 → 편의 기능 (Tweaks) -------------------------------------------------------------------------------------
@@ -1345,7 +1475,7 @@ public final class SetupActivity extends Activity {
             if (checked) ensureNotificationPermission();
         });
         text("재부팅 후 처음 잠금을 풀면 30초간 이 앱의 접근성 연결을 확인합니다.\n"
-            + "접근성 목록에서 이 앱이 빠지면 보안 설정 쓰기 권한으로 한 번 다시 등록합니다. "
+            + "접근성 목록에서 이 앱이 빠지면 보안 설정 쓰기 권한으로 최대 두 번 다시 등록합니다. "
             + "연결에 실패하면 알림을 표시합니다.", 14);
         toggle("자동 회전 제안 끄기", !Tweaks.secureOn(this, Tweaks.ROTATION_SUGGESTIONS, true),
             (view, checked) -> tweakSecure(view, Tweaks.ROTATION_SUGGESTIONS, !checked, checked));
@@ -1386,25 +1516,41 @@ public final class SetupActivity extends Activity {
         text("설치 프로그램 광고 제거는 앱 권한으로 바꿀 수 없어\n필요한 ADB 명령을 안내합니다.", 14);
     }
 
-    /** 전역 최대 주사율 설정: ColorOS's own 화면 주사율 choice, written with 보안 설정 쓰기 (device: no ADB needed). */
+    /** 전역 최대 주사율 설정. */
     private void refreshRateDialog() {
         int current = Tweaks.maxRefreshRate(this);
+        boolean screenMode = Tweaks.supportsScreenModeRequest();
         String[] labels = new String[Tweaks.REFRESH_RATES.length];
         int checked = -1;
         for (int i = 0; i < labels.length; i++) {
             int hz = Tweaks.REFRESH_RATES[i];
-            labels[i] = hz == 0 ? "자동" : hz + "Hz" + (hz == 144 ? " (게임 등 지원 앱에서만 144Hz)" : "");
+            labels[i] = hz == 0 ? "자동" : hz + "Hz" + (hz == 144 && !screenMode ? " (게임 등 지원 앱에서만 144Hz)" : "");
             if (hz == current) checked = i;
         }
         new AlertDialog.Builder(this).setTitle("전역 최대 주사율 설정")
             .setSingleChoiceItems(labels, checked, (dialog, which) -> {
                 int hz = Tweaks.REFRESH_RATES[which];
-                Toast.makeText(this, Tweaks.setMaxRefreshRate(this, hz)
-                    ? (hz == 0 ? "주사율을 자동으로 설정했습니다." : "최대 주사율을 " + hz + "Hz로 설정했습니다.")
-                    : "보안 설정 쓰기 권한이 필요합니다.\n최초 ADB 설정 안내를 확인해주세요.", Toast.LENGTH_SHORT).show();
                 dialog.dismiss();
+                // Blocking vendor Binder call (screen mode request): off the main thread, the toast posted back.
+                Context app = getApplicationContext();
+                new Thread(() -> {
+                    Tweaks.RefreshChange result = Tweaks.setMaxRefreshRate(app, hz);
+                    runOnUiThread(() -> refreshRateResult(result, hz, screenMode));
+                }, "PadRefreshRate").start();
             })
             .setNegativeButton("닫기", null).show();
+    }
+
+    private void refreshRateResult(Tweaks.RefreshChange result, int hz, boolean screenMode) {
+        String message = switch (result) {
+            case FAILED -> "보안 설정 쓰기 권한이 필요합니다.\n최초 ADB 설정 안내를 확인해주세요.";
+            case COLOROS_ONLY -> screenMode
+                ? "ColorOS 주사율을 저장했습니다. 화면 모드 요청은 확인하지 못했습니다."
+                : (hz == 0 ? "주사율을 자동으로 설정했습니다." : "최대 주사율을 " + hz + "Hz로 설정했습니다.");
+            case APPLIED -> hz == 0 ? "전역 요청을 해제하고 주사율을 자동으로 설정했습니다."
+                : "전역 최대 주사율을 " + hz + "Hz로 요청했습니다.";
+        };
+        Toast.makeText(getApplicationContext(), message, Toast.LENGTH_SHORT).show();
     }
 
     private void actionRow(String label, Runnable action) { actionRow(label, false, action); }
@@ -1709,7 +1855,7 @@ public final class SetupActivity extends Activity {
     }
 
     /** A flat rounded button: card-colored on the page, a light fill inside a card. No raised shadow. */
-    private void button(String label, Runnable action) {
+    private Button button(String label, Runnable action) {
         Button view = phrase(new Button(this));
         view.setText(label); view.setAllCaps(false); view.setTextSize(16);
         view.setTextColor(primary);
@@ -1724,6 +1870,7 @@ public final class SetupActivity extends Activity {
         LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         params.topMargin = dp(5); params.bottomMargin = dp(5);
         section.addView(view, params);
+        return view;
     }
 
     /** Display orientation (not this window's: split screen or a floating window must not pick the other value set). */
@@ -1776,12 +1923,28 @@ public final class SetupActivity extends Activity {
             this.preview = preview; this.changed = changed;
             range = () -> new int[]{min, max};
         }
+        /** Amber, readable on the light and the dark background. */
+        static final int WARN_COLOR = 0xFFF59E0B;
+        /** Values below this get a warning sign next to the value and show warning (if set). */
+        int warnBelow = Integer.MIN_VALUE;
+        TextView warning;
         /** The last position is exactly max even when max - min is not a multiple of step. */
         int value(int progress) { return Math.min(max, min + progress * step); }
         void show(int value) {
             bar.setProgress(Math.round((value - min) / (float) step));
-            label.setText(name + " · " + value + unit);
-            label.setContentDescription(name + " " + value + unit + ", 눌러서 숫자로 입력");
+            render(value);
+        }
+        /** Label text for a value, with the warning sign and line when it is below warnBelow. */
+        /** The value the label shows: a typed value off the step grid stays exact, unlike value(bar.getProgress()). */
+        int shown;
+        void render(int value) {
+            shown = value;
+            boolean warn = value < warnBelow;
+            SpannableStringBuilder text = new SpannableStringBuilder(name + " · " + value + unit);
+            if (warn) span(text, "  ⚠", new ForegroundColorSpan(WARN_COLOR), new StyleSpan(android.graphics.Typeface.BOLD));
+            label.setText(text);
+            label.setContentDescription(name + " " + value + unit + (warn ? ", 경고: 정상적으로 동작하지 않을 수 있음" : "") + ", 눌러서 숫자로 입력");
+            if (warning != null) warning.setVisibility(warn ? android.view.View.VISIBLE : android.view.View.GONE);
         }
         void setEnabled(boolean enabled) { bar.setEnabled(enabled); label.setEnabled(enabled); }
     }
@@ -1806,7 +1969,7 @@ public final class SetupActivity extends Activity {
         bar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
             @Override public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
                 int value = slider.value(progress);
-                label.setText(name + " · " + value + unit);
+                slider.render(value);
                 if (fromUser) changed.accept(value);
             }
             @Override public void onStartTrackingTouch(SeekBar seekBar) { if (preview) BarService.showPreview(true); }
@@ -1834,8 +1997,7 @@ public final class SetupActivity extends Activity {
             | android.view.inputmethod.EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING);
         input.setSingleLine(true);
         input.setSaveEnabled(false);
-        String current = slider.label.getText().toString();
-        String shown = current.substring(current.lastIndexOf(' ') + 1).replace(slider.unit, "");
+        String shown = String.valueOf(slider.shown); // not the label text: it may carry a warning sign
         if (TouchArea.typed(shown, signed) != null) input.setText(shown);
         input.setSelectAllOnFocus(true);
         input.setHint(range[0] + " ~ " + range[1]);
@@ -2198,7 +2360,7 @@ public final class SetupActivity extends Activity {
         } catch (SecurityException refused) { permitted = false; }
         if (!on) stopService(new Intent(this, BarService.class)); // the accessibility binding takes over
         if (!permitted) {
-            Toast.makeText(this, on ? "접근성에서 Circle-to-Search Trigger를 꺼주세요." : "접근성에서 Circle-to-Search Trigger를 다시 켜주세요.",
+            Toast.makeText(this, on ? "접근성에서 OpdCTS를 꺼주세요." : "접근성에서 OpdCTS를 다시 켜주세요.",
                 Toast.LENGTH_LONG).show();
             startActivity(freshSettings(Settings.ACTION_ACCESSIBILITY_SETTINGS));
         }
@@ -2207,7 +2369,7 @@ public final class SetupActivity extends Activity {
 
     private void openOverlayPermission() {
         // Device (ColorOS 17): the package URI is ignored and the full list opens, so the hint names the app.
-        Toast.makeText(this, "목록에서 Circle-to-Search Trigger를 찾아\n'다른 앱 위에 표시'를 허용한 뒤\n다시 켜주세요.", Toast.LENGTH_LONG).show();
+        Toast.makeText(this, "목록에서 OpdCTS를 찾아\n'다른 앱 위에 표시'를 허용한 뒤\n다시 켜주세요.", Toast.LENGTH_LONG).show();
         try {
             startActivity(new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:" + getPackageName())));
         } catch (ActivityNotFoundException unavailable) { openAppInfo(); }
@@ -2215,7 +2377,7 @@ public final class SetupActivity extends Activity {
 
     private void openAccessibility() {
         // The per-service details page needs a system permission (device: SecurityException), so the list with a hint.
-        Toast.makeText(this, "다운로드한 앱 → Circle-to-Search Trigger를 켜주세요.", Toast.LENGTH_LONG).show();
+        Toast.makeText(this, "다운로드한 앱 → OpdCTS를 켜주세요.", Toast.LENGTH_LONG).show();
         startActivity(freshSettings(Settings.ACTION_ACCESSIBILITY_SETTINGS));
     }
 
@@ -2227,11 +2389,17 @@ public final class SetupActivity extends Activity {
         try {
             getSystemService(android.content.ClipboardManager.class).setPrimaryClip(ClipData.newPlainText("자동 실행", "자동 실행"));
             startActivity(freshSettings(Settings.ACTION_APP_SEARCH_SETTINGS));
-            Toast.makeText(this, "검색창을 길게 눌러 '자동 실행'을 붙여넣고,\n결과에서 Circle-to-Search Trigger를 켜주세요.", Toast.LENGTH_LONG).show();
+            Toast.makeText(this, "검색창을 길게 눌러 '자동 실행'을 붙여넣고,\n결과에서 OpdCTS를 켜주세요.", Toast.LENGTH_LONG).show();
         } catch (ActivityNotFoundException | SecurityException unavailable) {
-            Toast.makeText(this, "설정 → 앱 → 자동 실행에서\nCircle-to-Search Trigger를 켜주세요.", Toast.LENGTH_LONG).show();
-            startActivity(freshSettings(Settings.ACTION_SETTINGS));
+            try {
+                startActivity(freshSettings(Settings.ACTION_SETTINGS));
+                Toast.makeText(this, "설정 → 앱 → 자동 실행에서\nOpdCTS를 켜주세요.", Toast.LENGTH_LONG).show();
+            } catch (ActivityNotFoundException | SecurityException missing) {
+                Toast.makeText(this, "설정 화면을 열 수 없습니다.", Toast.LENGTH_SHORT).show();
+                return;
+            }
         }
+        waitingAutoStart = true;
     }
 
     /** App info, where the ⋮ menu holds '제한된 설정 허용' (shown only while the restriction applies). */
@@ -2259,23 +2427,42 @@ public final class SetupActivity extends Activity {
             || getSystemService(ActivityManager.class).isBackgroundRestricted();
     }
 
-    private boolean autoStartMissed() {
+    private boolean autoStartMissed(int currentBoot) {
         long bootedAt = System.currentTimeMillis() - SystemClock.elapsedRealtime();
         try {
-            return BootRecovery.autoStartMissed(Settings.Global.getInt(getContentResolver(), Settings.Global.BOOT_COUNT, -1),
+            return BootRecovery.autoStartMissed(currentBoot,
                 BootRecovery.capturedBoot(this), getPackageManager().getPackageInfo(getPackageName(), 0).lastUpdateTime, bootedAt);
         } catch (android.content.pm.PackageManager.NameNotFoundException unavailable) { return false; }
     }
 
     private static final String AUTOSTART_CONFIRMED = "autostart_confirmed";
+    private static final String AUTOSTART_CONFIRMED_BOOT = "autostart_confirmed_boot";
+    private static final String WAITING_AUTO_START = "waiting_auto_start";
+    private boolean waitingAutoStart;
+
+    private void confirmAutoStart() {
+        int boot = Settings.Global.getInt(getContentResolver(), Settings.Global.BOOT_COUNT, -1);
+        preferences.edit().putBoolean(AUTOSTART_CONFIRMED, true).putInt(AUTOSTART_CONFIRMED_BOOT, boot).apply();
+        refresh();
+    }
 
     /** The user's own confirmation is the only "on" signal available; a later blocked boot clears it again. */
     private void autoStartPrompt() {
         showPhrased(new AlertDialog.Builder(this).setTitle("자동 실행")
-            .setMessage("설정 → 앱 → 자동 실행에서\nCircle-to-Search Trigger가 켜져 있는지 확인해주세요.\n\n'켜져 있음'을 누르면 이 안내를 닫습니다.\n재부팅 때 자동 실행이 막히면 다시 알려드립니다.")
+            .setMessage("설정 → 앱 → 자동 실행에서\nOpdCTS를 켠 뒤 이 화면으로 돌아와주세요.\n\n이미 켜져 있다면 ‘켜져 있음’을 누르세요.\n다음 부팅에서 자동 실행이 막히면 다시 알려드립니다.")
             .setPositiveButton("설정 열기", (dialog, which) -> openAutoStart())
-            .setNeutralButton("켜져 있음", (dialog, which) -> { preferences.edit().putBoolean(AUTOSTART_CONFIRMED, true).apply(); refresh(); })
+            .setNeutralButton("켜져 있음", (dialog, which) -> confirmAutoStart())
             .setNegativeButton("닫기", null));
+    }
+
+    private void askAutoStartConfirmed() {
+        if (!waitingAutoStart) return;
+        waitingAutoStart = false;
+        showPhrased(new AlertDialog.Builder(this).setTitle("자동 실행 확인")
+            .setMessage("자동 실행 목록에서 OpdCTS를 켰나요?")
+            .setPositiveButton("설정 완료", (dialog, which) -> confirmAutoStart())
+            .setNegativeButton("다시 시도", (dialog, which) -> openAutoStart())
+            .setNeutralButton("나중에", null));
     }
 
     private static final String RECENT_LOCKED_AT = "recent_locked_at";
@@ -2306,11 +2493,11 @@ public final class SetupActivity extends Activity {
             return;
         } catch (ActivityNotFoundException | SecurityException unavailable) { }
         recentSwitch.setChecked(true);
-        Toast.makeText(this, "Circle-to-Search Trigger 이름을 눌러\n'잠금'을 선택한 뒤 이 화면으로 돌아와주세요.", Toast.LENGTH_LONG).show();
+        Toast.makeText(this, "OpdCTS 이름을 눌러\n'잠금'을 선택한 뒤 이 화면으로 돌아와주세요.", Toast.LENGTH_LONG).show();
         // A short delay lets the card appear in recents first.
         status.postDelayed(() -> {
             if (!BarService.openRecents())
-                Toast.makeText(this, "최근 앱 화면에서 Circle-to-Search Trigger\n이름을 눌러 '잠금'을 선택해주세요.", Toast.LENGTH_LONG).show();
+                Toast.makeText(this, "최근 앱 화면에서 OpdCTS\n이름을 눌러 '잠금'을 선택해주세요.", Toast.LENGTH_LONG).show();
         }, 300);
     }
 
@@ -2347,7 +2534,7 @@ public final class SetupActivity extends Activity {
                 warn("'다른 앱 위에 표시'가 꺼져 있습니다", "접근성 없이 실행에 필요합니다. 눌러서 허용해주세요.", this::openOverlayPermission);
         } else if (!BarService.granted(this))
         {
-            warn("접근성이 꺼져 있습니다", "눌러서 Circle-to-Search Trigger를 켜주세요.", this::openAccessibility);
+            warn("접근성이 꺼져 있습니다", "눌러서 OpdCTS를 켜주세요.", this::openAccessibility);
             // Android blocks accessibility once for apps installed from a browser or file manager ("restricted settings");
             // whether it applies cannot be read by the app, so the way out is offered while accessibility is off.
             // Device (Android 17): the entry is greyed out and tapping it shows "앱의 액세스가 거부됨".
@@ -2355,7 +2542,7 @@ public final class SetupActivity extends Activity {
         } else if (!BarService.serviceRunning())
             // Device: granting READ_LOGS over ADB kills the process ("changed gids"); Android then marks the service
             // crashed and never rebinds it until the user toggles it.
-            warn("접근성이 작동하지 않습니다", "권한을 새로 받은 뒤 멈출 수 있습니다.\n눌러서 Circle-to-Search Trigger를 껐다가 다시 켜주세요.", this::openAccessibility);
+            warn("접근성이 작동하지 않습니다", "권한을 새로 받은 뒤 멈출 수 있습니다.\n눌러서 OpdCTS를 껐다가 다시 켜주세요.", this::openAccessibility);
         if (!BootRecovery.permitted(this))
             warn("보안 설정 쓰기 권한이 없습니다", "재부팅 후 자동 복구와 ColorOS 기본 하단 바에 필요합니다.\n눌러서 ADB 설정 안내 보기", this::adbHelp);
         if (BarService.logsWanted(this) && !BarService.logsPermitted(this))
@@ -2367,10 +2554,12 @@ public final class SetupActivity extends Activity {
             warn("백그라운드 활동이 제한되어 있습니다", "앱이 종료될 수 있습니다.\n눌러서 배터리 사용량 → 백그라운드 활동 허용", this::openAppInfo);
         // ColorOS keeps "자동 실행" unreadable to apps (no app op or setting changes; provider and page need a system-only
         // permission). So: a reminder until the user confirms it, and a hard warning whenever a boot proves it blocked.
-        if (autoStartMissed()) {
-            preferences.edit().remove(AUTOSTART_CONFIRMED).apply();
+        int currentBoot = Settings.Global.getInt(getContentResolver(), Settings.Global.BOOT_COUNT, -1);
+        boolean autoStartConfirmed = preferences.getBoolean(AUTOSTART_CONFIRMED, false);
+        if (autoStartMissed(currentBoot) && (!autoStartConfirmed || preferences.getInt(AUTOSTART_CONFIRMED_BOOT, -1) != currentBoot)) {
+            if (autoStartConfirmed) preferences.edit().remove(AUTOSTART_CONFIRMED).remove(AUTOSTART_CONFIRMED_BOOT).apply();
             warn("이번 부팅에서 자동 실행이 차단되었습니다", "재부팅 후 접근성이 꺼질 수 있습니다.\n설정 → 앱 → 자동 실행에서 이 앱을 켜주세요.", this::autoStartPrompt);
-        } else if (!preferences.getBoolean(AUTOSTART_CONFIRMED, false))
+        } else if (!autoStartConfirmed)
             warn("자동 실행이 켜져 있는지 확인해주세요", "꺼져 있으면 재부팅 후 접근성이 꺼질 수 있습니다.\n앱이 이 설정을 직접 읽을 수 없어 한 번 확인이 필요합니다.", this::autoStartPrompt);
         if (cleanupKilled())
             // Re-approval only matters when an option reads device logs (ColorOS bar, power button).
@@ -2415,6 +2604,8 @@ public final class SetupActivity extends Activity {
             BootRecovery.permitted(this), LogSession.breenoDisabled(this), BarService.logsPermitted(this), log == LogSession.ACTIVE,
             log == LogSession.CONNECTING, BarService.ready(this), MainActivity.cts(preferences.getString(MainActivity.TARGET_COMPONENT, "")),
             BarService.googleVoice(this), gesture);
+        String startLabel = state.startsWith(StatusPolicy.BAR_IN_USE + " · ") ? StatusPolicy.BAR_IN_USE : "사용 시작";
+        if (!startLabel.contentEquals(startButton.getText())) startButton.setText(startLabel);
         long now = System.currentTimeMillis();
         boolean[] shown = shownPathways();
         logStatus.setText(row("기기 로그", logState()));
@@ -2463,12 +2654,28 @@ public final class SetupActivity extends Activity {
         if (shown[0]) records.append("[하단 · 연결 앱]\n").append(StatusPolicy.detail(preferences.getString(BarService.LAST_BAR, null), now)).append("\n\n");
         if (shown[1]) records.append("[전원 버튼 · Gemini Assistant]\n").append(StatusPolicy.detail(preferences.getString(BarService.LAST_POWER, null), now)).append("\n\n");
         if (shown[2]) records.append("[전원 버튼 두 번 누르기]\n").append(StatusPolicy.detail(preferences.getString(BarService.LAST_DOUBLE, null), now)).append("\n\n");
+        records.append("[진단]\n").append(diagnosis()).append("\n\n");
         showPhrased(new AlertDialog.Builder(this).setTitle("최근 실행 기록")
             .setMessage(records
                 + "경로마다 마지막 1건만 이 기기에 저장하며,\n외부로 보내지 않습니다.\n앱은 실행 요청 전달과 서클 투 서치·Gemini\n요청 수락까지만 확인합니다."
                 + "\n창이 실제로 떴는지는 확인하지 않습니다.\nGoogle 상태는 선택과 설치·사용 여부만 확인하며,\n실제 연결 상태는 알 수 없습니다."
                 + "\n길게 눌렀는데 기록이 바뀌지 않았다면\n입력이 감지되지 않았을 수 있습니다.\n기기 로그 연결과 ColorOS의\n'전원 버튼으로 음성 비서 호출' 설정을 확인해보세요.")
             .setPositiveButton("닫기", null));
+    }
+
+    /**
+     * Why this app last stopped and when the device log last dropped, so a report can name the cause without ADB
+     * (2026-11-28: "dies in games" was not reproducible on the test tablet).
+     */
+    private String diagnosis() {
+        java.text.SimpleDateFormat time = new java.text.SimpleDateFormat("MM-dd HH:mm", java.util.Locale.ROOT);
+        String exit = "기록 없음";
+        try {
+            for (android.app.ApplicationExitInfo info : getSystemService(ActivityManager.class).getHistoricalProcessExitReasons(null, 0, 1))
+                exit = time.format(new java.util.Date(info.getTimestamp())) + " · " + StatusPolicy.exitLabel(info.getReason(), info.getDescription());
+        } catch (RuntimeException unavailable) { exit = "확인 불가"; }
+        long lost = preferences.getLong(BarService.LOG_LOST_AT, 0);
+        return "마지막 종료: " + exit + "\n기기 로그 끊김: " + (lost == 0 ? "기록 없음" : time.format(new java.util.Date(lost)));
     }
 
     /** Structural state only: a session counts as connected after a system-UID entry, never on own-UID output. */
@@ -2527,14 +2734,8 @@ public final class SetupActivity extends Activity {
             lockedSwitch.setChecked(BarService.lockedAssist(this));
             doubleSwitch.setChecked(BarService.doublePress(this));
             overlaySwitch.setChecked(BarService.overlayMode(this));
-            // Alerts show on only when Android can deliver them (notifications may be turned off later in system settings);
-            // the saved choice stays, so they work again once allowed. The capsule also needs the log alert and Live Updates.
-            boolean notify = getSystemService(android.app.NotificationManager.class).areNotificationsEnabled();
-            logAlert.setChecked(notify && Alerts.wanted(this, Alerts.LOG));
-            updateAlert.setChecked(notify && Alerts.wanted(this, Alerts.UPDATE));
-            islandAlert.setChecked(logAlert.isChecked() && Alerts.wanted(this, Alerts.ISLAND) && Alerts.islandAllowed(this));
-            islandAlert.setEnabled(logAlert.isChecked());
         } finally { syncing = false; }
+        syncAlertSwitches();
         // Overlay mode: nothing restarts the service after a kill; opening this screen does.
         if (BarService.overlayMode(this) && !BarService.serviceRunning() && Settings.canDrawOverlays(this))
             startService(new Intent(this, BarService.class));
@@ -2543,8 +2744,22 @@ public final class SetupActivity extends Activity {
         BarService.refreshConfiguration(); refresh(); applyRecentVisibility();
         status.postDelayed(this::refresh, 300);
         BarService.showPreview(areaSwitch.isChecked());
+        if (waitingAutoStart) status.post(this::askAutoStartConfirmed);
         if (recentBeforeLock != null) status.post(this::askRecentLocked);
         if (waitingAccessibility && BarService.granted(this)) { waitingAccessibility = false; begin(); }
+    }
+
+    @Override protected void onPostResume() {
+        super.onPostResume();
+        requestFirstAlerts();
+    }
+
+    /** The saved alert choices are available again when their system permissions are enabled. */
+    private void syncAlertSwitches() {
+        boolean notify = getSystemService(NotificationManager.class).areNotificationsEnabled();
+        setSynced(logAlert, notify && Alerts.wanted(this, Alerts.LOG));
+        setSynced(updateAlert, notify && Alerts.wanted(this, Alerts.UPDATE));
+        setSynced(islandAlert, notify && Alerts.wanted(this, Alerts.ISLAND) && Alerts.islandAllowed(this));
     }
 
     @Override public void onStart() {

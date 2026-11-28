@@ -25,7 +25,7 @@ public final class MainActivity extends Activity {
     static final String DOUBLE = "double";
     /** Internal extra from BarService: the direct call was already refused, go straight to the fallback. */
     static final String DIRECT_TRIED = "direct_tried";
-    static final String CTS_ACCEPTED = "시스템이 서클 투 서치 요청을 수락함 · 화면 표시는 확인하지 않음";
+    static final String CTS_ACCEPTED = "서클 투 서치 요청 전달됨 · 화면 표시 미검증";
     /** Internal extra from this app's quick settings tiles (PendingIntent): which tile was tapped. */
     static final String SOURCE = "source";
     static final int TILE_SEARCH = 1, TILE_ASSISTANT = 2;
@@ -84,7 +84,7 @@ public final class MainActivity extends Activity {
                 try {
                     startActivity(Intent.makeMainActivity(component)
                         .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_NO_ANIMATION));
-                    record(StatusPolicy.HANDED_OFF, "선택한 앱 실행 요청 전달됨 · 앱 화면 표시는 확인하지 않음");
+                    record(StatusPolicy.HANDED_OFF, "앱 실행 요청 전달됨 · 화면 표시 미검증");
                 } catch (ActivityNotFoundException | SecurityException error) {
                     Log.w("FastMiCTS", "Selected app unavailable", error);
                     record(StatusPolicy.FAILED, "선택한 앱을 열 수 없음 (" + error.getClass().getSimpleName() + ") · 설정에서 다시 선택 필요");
@@ -157,7 +157,7 @@ public final class MainActivity extends Activity {
             startActivity(new Intent().setClassName(
                 "com.parallelc.micts", "com.parallelc.micts.ui.activity.MainActivity")
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_NO_ANIMATION));
-            record(StatusPolicy.HANDED_OFF, warmup + "MiCTS 실행 요청 전달됨 · 서클 투 서치 화면 표시는 확인하지 않음");
+            record(StatusPolicy.HANDED_OFF, warmup + "MiCTS 요청 전달됨 · 화면 표시 미검증");
         } catch (ActivityNotFoundException | SecurityException error) {
             Log.e("FastMiCTS", "MiCTS could not be opened", error);
             record(StatusPolicy.FAILED, warmup + "MiCTS를 열 수 없음 (" + error.getClass().getSimpleName() + ") · MiCTS 설치와 활성화 확인");

@@ -371,8 +371,13 @@ public final class StateHarness {
         context.secure.put(Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES,OTHER);
         context.secure.put(Settings.Secure.ACCESSIBILITY_ENABLED,"0");
         context.observers.get(Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES).onChange(false);
-        check(context.notices==2 && context.writes==1 && master(context)==0,
-            "Second disable in the same boot is reported without another write");
+        check(context.notices==1 && context.writes==3 && master(context)==1,
+            "A second removal in the same boot (ColorOS check after an early restore) restores again");
+        context.secure.put(Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES,OTHER);
+        context.secure.put(Settings.Secure.ACCESSIBILITY_ENABLED,"0");
+        context.observers.get(Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES).onChange(false);
+        check(context.notices==2 && context.writes==3 && master(context)==0,
+            "A third removal in the same boot is reported without another write");
         BootRecovery.setActive(context,false);
         check(context.observers.isEmpty() && android.os.Handler.pending()==0 && !context.notice,
             "Opting out stops the active window and clears its notification");
@@ -386,8 +391,8 @@ public final class StateHarness {
         context.bootCount++;
         bar(context).edit().putBoolean("overlay_mode",false).remove(BootRecovery.OPTION).commit();
         BootRecovery.unlockedBoot(context);
-        check(context.writes==3 && master(context)==1 && BarService.accessibilityRegistered(context),
-            "The default setting restores both missing settings once per boot");
+        check(context.writes==5 && master(context)==1 && BarService.accessibilityRegistered(context),
+            "The default setting restores both missing settings");
         android.os.Handler.finishWindow();
         check(context.notices==3 && context.observers.isEmpty(),"Still unbound at the deadline is reported");
 
@@ -395,14 +400,14 @@ public final class StateHarness {
         context.secure.put(Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES,OTHER+":"+BootRecovery.SERVICE);
         context.secure.put(Settings.Secure.ACCESSIBILITY_ENABLED,"0");
         BootRecovery.unlockedBoot(context);
-        check(context.notices==3 && context.writes==3,"A master switch change alone does not consume the restore attempt");
+        check(context.notices==3 && context.writes==5,"A master switch change alone does not consume the restore attempt");
         context.secure.put(Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES,OTHER);
         context.failIntWrites = 1;
         context.observers.get(Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES).onChange(false);
-        check(context.notices==4 && context.writes==5 && master(context)==0,
+        check(context.notices==4 && context.writes==7 && master(context)==0,
             "A later removal can restore the entry and reports a refused master switch write");
         android.os.Handler.finishWindow();
-        check(context.writes==5 && context.observers.isEmpty(),"Deadline never retries a refused write");
+        check(context.writes==7 && context.observers.isEmpty(),"Deadline never retries a refused write");
         Context initial = new Context();
         initial.secure.put(BarGesture.GESTURE_KEY,"1");
         initial.beforeWrite = () -> check(bar(initial).getInt(BarGesture.ORIGINAL,-1)==1
@@ -708,6 +713,12 @@ public final class StateHarness {
         plain.permission = 0;
         plain.secure.put(VoiceRepair.KEY,other);
         check(VoiceRepair.prepare(plain) == VoiceRepair.NOT_GOOGLE && plain.writes==0 && other.equals(plain.secure.get(VoiceRepair.KEY)),"Another selected assistant is never touched by a power press");
+        Context boot = new Context();
+        boot.secure.put(VoiceRepair.ASSISTANT,google);
+        long resyncStart = System.nanoTime();
+        check(VoiceRepair.prepare(boot) == VoiceRepair.REBOUND && boot.writes==1 && google.equals(boot.secure.get(VoiceRepair.KEY))
+            && !bar(boot).contains(VoiceRepair.PENDING) && (System.nanoTime() - resyncStart) / 1_000_000 >= VoiceRepair.RESYNC_SETTLE_MS,
+            "Drift after reboot: the press resyncs Google once, skips the rebind and waits for the cold bind before Gemini");
         Context manual = new Context();
         manual.secure.put(VoiceRepair.KEY,google);
         Thread repair = new Thread(() -> VoiceRepair.run(manual));
@@ -967,17 +978,17 @@ if (([regex]::Matches($joinedSources, '"showSessionFromSession"')).Count -ne 2 -
     throw 'Circle to Search direct call: one hidden call site, unlocked screen and Google assistant only'
 }
 $securityChecks++
-# Optional alerts: off by default, permission asked only from the settings switch, plain dismissible notifications only,
-# the update check a non-exported 24 h job behind the 24 h guard, and the tap opens settings without extras.
+# Optional alerts default off. Permissions are requested by the settings activity, and the non-exported update job runs at most daily.
 $alerts = $allSources['Alerts.java']
 $androidNs = $namespaces.LookupNamespace('android')
 $updateJob = $manifest.SelectSingleNode('/manifest/application/service[@android:name=".Alerts$UpdateJob"]',$namespaces)
-# The only ongoing notice is the opt-in camera-island (Live Update) form of the log notice, and only while it can be
-# promoted; it is cancelled on reconnect. The update notice is never ongoing.
+# Ongoing is reserved for opt-in Live Updates when promotion is allowed. Update notices stay dismissible.
 if ($alerts -cmatch 'startForeground|FOREGROUND_SERVICE|AlarmManager|WorkManager|putExtra\(' -or
     ([regex]::Matches($alerts, 'setOngoing\(')).Count -ne 1 -or
     $alerts -notmatch 'boolean live = island && islandAllowed\(context\);\s*if \(live\) builder\.setStyle\([^;]*\.setOngoing\(live\)' -or
     $alerts -notmatch 'title, text, wanted\(context, ISLAND\), approve' -or $alerts -notmatch '", false, settings\(app\)\);' -or
+    $alerts -notmatch '(?s)post\(context, BOOT_ACCESS, "boot_accessibility",[^;]*wanted\(context, ISLAND\),\s*new Intent\(Settings.ACTION_ACCESSIBILITY_SETTINGS\)[^;]*"접근성 복구", 0\);' -or
+    $alerts -notmatch 'manager.cancel\(BOOT_ACCESS\);' -or
     $alerts -notmatch 'getBoolean\(key, false\)' -or
     $alerts -notmatch 'if \(!bar\.getBoolean\(UPDATE, false\) \|\| !StatusPolicy\.updateCheckDue\(now, bar\.getLong\(CHECKED_AT, 0\)\)\) \{ done\.run\(\); return; \}' -or
     $alerts -notmatch 'if \(!wanted\(context, UPDATE\)\) \{ jobs\.cancel\(UPDATE_JOB\); return; \}' -or
@@ -987,12 +998,12 @@ if ($alerts -cmatch 'startForeground|FOREGROUND_SERVICE|AlarmManager|WorkManager
     $alerts -notmatch '\.setPeriodic\(StatusPolicy\.UPDATE_INTERVAL\)' -or $alerts -notmatch 'PendingIntent\.FLAG_IMMUTABLE' -or
     # The log alert is posted only while its switch is on.
     $alerts -notmatch 'if \(!wanted\(context, LOG\)\) return;' -or
-    # A tap opens only this app's settings screen or its log approval bridge, never anything else.
+    # Explicit component intents only open the settings screen or log approval bridge.
     ((@([regex]::Matches($alerts, 'new Intent\(context, (\w+)\.class\)') | ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique)) -join ',') -cne 'LogAccessActivity,SetupActivity' -or
     -not $updateJob -or $updateJob.GetAttribute('exported',$androidNs) -ne 'false' -or $updateJob.GetAttribute('permission',$androidNs) -ne 'android.permission.BIND_JOB_SERVICE' -or
     @($allSources.Keys | Where-Object { $allSources[$_] -match 'requestPermissions\(' }) -join ',' -cne 'SetupActivity.java' -or
     @($allSources.Keys | Where-Object { $_ -ne 'Alerts.java' -and $allSources[$_] -match 'Alerts\.maybeCheckUpdate\(' }).Count -ne 0) {
-    throw 'Alerts: opt-in, permission only from settings, plain notifications, 24 h job only while the update alert is on'
+    throw 'Alerts: opt-in Live Updates, permission only from settings, 24 h job only while the update alert is on'
 }
 $securityChecks++
 # Optional tweaks (설정 → 고급 → 편의 기능): every settings key the class names is on this list; secure writes go through
@@ -1000,7 +1011,8 @@ $securityChecks++
 $tweaks = $allSources['Tweaks.java']
 $tweakKeys = @([regex]::Matches($tweaks, '"([a-z_]+)"') | ForEach-Object { $_.Groups[1].Value } | Where-Object { $_ -match '_' } | Sort-Object -Unique)
 # color_display is the system service name the 딥 다크 모드 tile reads its state from, not a settings key.
-$allowedTweakKeys = @('animator_duration_scale','bluetooth_name','clock_seconds','color_display','development_settings_enabled','device_name','device_tether_name','oplus_customize_screen_refresh_rate','reduce_bright_colors_activated','revise_device_name',
+# refresh_request is this app's own preference (its global refresh request, sent again after boot), not a settings key.
+$allowedTweakKeys = @('animator_duration_scale','bluetooth_name','clock_seconds','color_display','development_settings_enabled','device_name','device_tether_name','oplus_customize_screen_refresh_rate','reduce_bright_colors_activated','refresh_request','revise_device_name',
     'show_rotation_suggestions','system_opt_enable','transition_animation_scale','tweak_state_','window_animation_scale')
 if (($tweakKeys -join ',') -cne ($allowedTweakKeys -join ',') -or
     @($allSources.Keys | Where-Object { $allSources[$_] -match 'Settings\.System\.put|\.call\(' }).Count -ne 0 -or
@@ -1112,11 +1124,11 @@ if ($barService -match 'TYPE_WINDOW_|TYPE_VIEW_|com\.heytap\.speechassist|com\.c
 }
 $securityChecks++
 # Experimental overlay mode: app overlays exist only in BarService, only without the accessibility binding (bound false),
-# and the 1x1 keeper never takes touches. The power keys are never handed over in that mode.
+# and the 1x1 keeper never takes touches (an accessibility overlay while bound, for ColorOS Hans). The power keys are never handed over in that mode.
 if ((@($allSources.Keys | Where-Object { $allSources[$_] -match 'TYPE_APPLICATION_OVERLAY' }) -join ',') -cne 'BarService.java' -or
     $barService -notmatch 'bound \? WindowManager\.LayoutParams\.TYPE_ACCESSIBILITY_OVERLAY : WindowManager\.LayoutParams\.TYPE_APPLICATION_OVERLAY' -or
     $barService -notmatch '(?s)private void keep\(\) \{.*?FLAG_NOT_TOUCHABLE.*?\}' -or
-    $barService -notmatch 'if \(bound\) \{ unsubscribe\(\); unkeep\(\); \} else keep\(\);' -or
+    $barService -notmatch '(?s)if \(bound\) unsubscribe\(\);.*?if \(enabled\(this\) \|\| logsWanted\(this\)\) keep\(\); else unkeep\(\);' -or
     $barService -notmatch 'if \(overlayMode\(context\)\) return Settings\.canDrawOverlays\(context\);') {
     throw 'Overlay mode: app overlays only in BarService without accessibility, untouchable keeper, overlay permission as the grant'
 }

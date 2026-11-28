@@ -6,6 +6,10 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
+import android.os.Build;
+import android.os.IBinder;
+import android.os.Parcel;
+import android.os.RemoteException;
 import android.provider.Settings;
 import android.util.Log;
 
@@ -66,15 +70,20 @@ final class Tweaks {
     }
 
     // --- Max refresh rate ---------------------------------------------------------------------------------------------
-    // ColorOS keeps its 화면 주사율 choice in a Secure key, which this app may write with WRITE_SECURE_SETTINGS (no ADB).
-    // Device: writing it alone is enough, ColorOS moves the private System peak_refresh_rate itself (60, 90 and 120 took
-    // effect at once). Indexes from Settings' ScreenRefreshRateController: 0 auto, 1 = 90, 2 = 60, 3 = 120, 4 = 144.
-    // 144 stays 120 outside apps ColorOS lets run at 144 (games), even with peak_refresh_rate forced to 144 over ADB.
-
     private static final String REFRESH_KEY = "oplus_customize_screen_refresh_rate";
+    private static final String SCREEN_MODE_SERVICE = "oplusscreenmode";
+    private static final String SCREEN_MODE_DESCRIPTOR = "com.oplus.screenmode.IOplusScreenMode";
+    private static final int REQUEST_REFRESH_RATE = 4, RATE_ID_144 = 4;
+    private static final String REFRESH_REQUEST = "refresh_request";
     /** 0 = ColorOS's 자동 (index 0), the rest in Hz. */
     static final int[] REFRESH_RATES = {0, 60, 90, 120, 144};
-    private static final int[] REFRESH_INDEXES = {0, 2, 1, 3, 4};
+    // The Settings controller and the Binder service use the same rate IDs on OPD2515.
+    private static final int[] REFRESH_INDEXES = {0, 2, 1, 3, RATE_ID_144};
+    enum RefreshChange { APPLIED, COLOROS_ONLY, FAILED }
+
+    static boolean supportsScreenModeRequest() {
+        return "OPD2515".equals(Build.MODEL) && Build.VERSION.SDK_INT == 37;
+    }
 
     /** The chosen rate in Hz, 0 for ColorOS's 자동, -1 when unreadable or unknown. */
     static int maxRefreshRate(Context context) {
@@ -85,14 +94,53 @@ final class Tweaks {
         return -1;
     }
 
-    /** Writes one of REFRESH_RATES (0 = 자동); false when the rate is not offered or the write was refused. */
-    static boolean setMaxRefreshRate(Context context, int hz) {
+    /** Saves the ColorOS mode, then applies or releases the global request on the validated firmware. */
+    static RefreshChange setMaxRefreshRate(Context context, int hz) {
         for (int i = 0; i < REFRESH_RATES.length; i++) {
             if (REFRESH_RATES[i] != hz) continue;
-            try { return Settings.Secure.putInt(context.getContentResolver(), REFRESH_KEY, REFRESH_INDEXES[i]); }
-            catch (RuntimeException refused) { Log.w("PadTweaks", "refresh rate refused"); return false; }
+            int mode = REFRESH_INDEXES[i];
+            // Cleared before the key changes, so the key watcher never takes this app's own change for a ColorOS choice.
+            prefs(context).edit().remove(REFRESH_REQUEST).apply();
+            try {
+                if (!Settings.Secure.putInt(context.getContentResolver(), REFRESH_KEY, mode)) return RefreshChange.FAILED;
+            } catch (RuntimeException refused) {
+                Log.w("PadTweaks", "refresh rate setting refused");
+                return RefreshChange.FAILED;
+            }
+            boolean applied = supportsScreenModeRequest() && requestScreenMode(mode);
+            // Remembered so reapply can send it again after boot (only while it is an active, non-자동 request).
+            if (applied && mode != 0) prefs(context).edit().putInt(REFRESH_REQUEST, mode).apply();
+            return applied ? RefreshChange.APPLIED : RefreshChange.COLOROS_ONLY;
         }
-        return false;
+        return RefreshChange.FAILED;
+    }
+
+    private static boolean requestScreenMode(int mode) {
+        boolean enable = mode != 0;
+        try {
+            Class<?> manager = Class.forName("android.os.ServiceManager");
+            IBinder binder = (IBinder) manager.getMethod("getService", String.class).invoke(null, SCREEN_MODE_SERVICE);
+            if (binder == null || !SCREEN_MODE_DESCRIPTOR.equals(binder.getInterfaceDescriptor())) return false;
+            Parcel data = Parcel.obtain();
+            Parcel reply = Parcel.obtain();
+            try {
+                data.writeInterfaceToken(SCREEN_MODE_DESCRIPTOR);
+                data.writeBoolean(enable);
+                data.writeInt(enable ? mode : RATE_ID_144);
+                if (!binder.transact(REQUEST_REFRESH_RATE, data, reply, 0)) return false;
+                reply.readException();
+                boolean accepted = reply.readBoolean();
+                Log.i("PadTweaks", "screen mode request=" + mode + " accepted=" + accepted);
+                // On this firmware releasing an already absent vote also returns false.
+                return accepted || !enable;
+            } finally {
+                reply.recycle();
+                data.recycle();
+            }
+        } catch (ReflectiveOperationException | RemoteException | RuntimeException refused) {
+            Log.w("PadTweaks", "screen mode request unavailable: " + refused.getClass().getSimpleName());
+            return false;
+        }
     }
 
     // --- Animation scale ----------------------------------------------------------------------------------------------
@@ -171,6 +219,58 @@ final class Tweaks {
             } catch (RuntimeException unreadable) { /* @hide keys may be unreadable: write anyway */ }
             if (setSecure(context, key, wanted)) Log.i("PadTweaks", "re-applied after boot: " + key);
         }
+        reapplyRefreshRate(context);
+    }
+
+    /**
+     * Device (OPD2515, 2026-11-28): at boot ColorOS rebuilds the 144Hz request itself only when its saved choice is 144
+     * AND System peak_refresh_rate is 144. With peak at 120 the screen stays at 120Hz, and apps cannot write peak
+     * ("You cannot keep your settings in the secure settings", even with both settings permissions). So the request this
+     * app made is sent again, while ColorOS's saved choice still matches it; a choice made in ColorOS settings wins.
+     */
+    private static void reapplyRefreshRate(Context context) {
+        int mode = prefs(context).getInt(REFRESH_REQUEST, 0);
+        if (mode == 0) return;
+        int current;
+        try { current = Settings.Secure.getInt(context.getContentResolver(), REFRESH_KEY, -1); }
+        catch (RuntimeException unreadable) { return; }
+        if (current != mode || !supportsScreenModeRequest()) { prefs(context).edit().remove(REFRESH_REQUEST).apply(); return; }
+        // Blocking vendor Binder call: kept off the caller's (main) thread.
+        new Thread(() -> Log.i("PadTweaks", "refresh request re-sent: " + mode + " ok=" + requestScreenMode(mode)),
+            "PadRefreshRate").start();
+    }
+
+    private static android.database.ContentObserver refreshWatch;
+
+    /**
+     * Firmware (oplus-services OplusRefreshRatePolicyImpl): the request is one vote slot (priority 70) that a release
+     * clears whatever rate it names, and ColorOS's own settings observer for REFRESH_KEY never touches that slot. So a
+     * rate picked later in ColorOS settings would stay overridden by this app's request; it is released here instead.
+     */
+    static synchronized void watchRefreshRate(Context context) {
+        if (refreshWatch != null) return;
+        Context app = context.getApplicationContext();
+        refreshWatch = new android.database.ContentObserver(null) { // binder thread: the blocking release may run here
+            @Override public void onChange(boolean selfChange) {
+                int mode = prefs(app).getInt(REFRESH_REQUEST, 0);
+                if (mode == 0) return;
+                int current;
+                try { current = Settings.Secure.getInt(app.getContentResolver(), REFRESH_KEY, -1); }
+                catch (RuntimeException unreadable) { return; }
+                if (current == mode) return;
+                prefs(app).edit().remove(REFRESH_REQUEST).apply();
+                Log.i("PadTweaks", "ColorOS rate changed to " + current + ": request released ok=" + requestScreenMode(0));
+            }
+        };
+        try { app.getContentResolver().registerContentObserver(Settings.Secure.getUriFor(REFRESH_KEY), false, refreshWatch); }
+        catch (RuntimeException unavailable) { refreshWatch = null; }
+    }
+
+    /** Releases this app's refresh request, if any (모든 설정 초기화). ColorOS's own saved choice is left as it is. */
+    private static void releaseRefreshRate(Context context) {
+        if (prefs(context).getInt(REFRESH_REQUEST, 0) == 0) return;
+        prefs(context).edit().remove(REFRESH_REQUEST).apply();
+        new Thread(() -> Log.i("PadTweaks", "refresh request released ok=" + requestScreenMode(0)), "PadRefreshRate").start();
     }
 
     /** 모든 설정 초기화: every switch of this class back to its default (fails quietly without 보안 설정 쓰기). */
@@ -179,6 +279,7 @@ final class Tweaks {
         setSecure(context, CLOCK_SECONDS, false);
         setSecure(context, SYSTEM_OPT, false);
         setAnimationScale(context, 1f);
+        releaseRefreshRate(context);
     }
 
     // --- Developer options --------------------------------------------------------------------------------------------

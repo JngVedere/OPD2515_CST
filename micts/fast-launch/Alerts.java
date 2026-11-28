@@ -17,8 +17,8 @@ import android.provider.Settings;
 import android.util.Log;
 
 /**
- * Optional notifications (both off by default; settings -> 알림): device-log access that an enabled option needs is
- * missing, and a new version is available. Plain dismissible notifications only, never a persistent or foreground one.
+ * Device-log access, boot accessibility recovery, and update notifications. The recovery and log notices can also
+ * be posted as Live Updates when the user opts in.
  * The update check is a periodic system job (24 h), scheduled only while that alert is on, and guarded so it runs at most
  * once per StatusPolicy.UPDATE_INTERVAL. Device (ColorOS 17): an unlock broadcast to the service was skipped
  * ("oplus skip sp"), so it could not carry the check.
@@ -26,10 +26,10 @@ import android.util.Log;
 final class Alerts {
     static final String LOG = "alert_log", UPDATE = "alert_update";
     /**
-     * Opt-in: the device-log notice also as an Android 16 Live Update, which ColorOS shows in the capsule by the camera.
+     * Opt-in: show the log and boot accessibility notices as Live Updates in the ColorOS camera capsule.
      * Device (ColorOS 17): promotion also needs the per-app "라이브 알림에 라이브 업데이트 표시" switch, off by default
      * (canPostPromotedNotifications false until the user turns it on). Android promotes only ongoing notices, so the
-     * notice is ongoing only while it can actually be promoted; it is cancelled as soon as the log reconnects.
+     * notice is ongoing only while it can actually be promoted; it is cancelled when the affected feature reconnects.
      */
     static final String ISLAND = "alert_island";
     private static final String CHECKED_AT = "update_checked_at", NOTIFIED_CODE = "update_notified_code";
@@ -68,8 +68,8 @@ final class Alerts {
 
     static void accessibilityMissing(Context context) {
         post(context, BOOT_ACCESS, "boot_accessibility", "재부팅 후 접근성", "접근성을 다시 연결해주세요",
-            "눌러서 다운로드한 앱 → Circle-to-Search Trigger를 확인해주세요.", false,
-            new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+            "눌러서 다운로드한 앱 → OpdCTS를 확인해주세요.", wanted(context, ISLAND),
+            new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK), "접근성 복구", 0);
     }
 
     static void accessibilityRestored(Context context) {
@@ -152,7 +152,7 @@ final class Alerts {
 
     /** Settings button demo: the log notice's capsule form with test text; it removes itself after TEST_MS. */
     static void test(Context context) {
-        post(context, TEST, "log", "기기 로그 권한", "카메라 섬 테스트 알림", "Circle-to-Search Trigger의 알림이 여기에 뜹니다. 10초 뒤 사라집니다.",
+        post(context, TEST, "log", "기기 로그 권한", "카메라 섬 테스트 알림", "OpdCTS의 알림이 여기에 뜹니다. 10초 뒤 사라집니다.",
             true, settings(context), "테스트", TEST_MS);
     }
 

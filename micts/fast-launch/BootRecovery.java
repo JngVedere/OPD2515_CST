@@ -25,6 +25,9 @@ final class BootRecovery {
     static final String APPROVED = "accessibility_approved";
     private static final String TAG = "PadBoot";
     private static final long WINDOW_MS = 30_000;
+    /** Device: OplusRiskAccessibilityController disables sideloaded services once per boot (USER_UNLOCKED + 1s). A restore
+     *  that lands before that check is undone, so a second attempt restores after it. */
+    static final int RESTORE_ATTEMPTS = 2;
     private static BroadcastReceiver unlockReceiver;
     private static Watch watch;
 
@@ -121,6 +124,9 @@ final class BootRecovery {
     static void unlockedBoot(Context context) {
         if (!isUserUnlocked(context)) return;
         Context app = context.getApplicationContext();
+        // Device: voice_interaction_service is not Google after a reboot (system logs no available service that early), so the
+        // first press bound Google cold and failed. Rebinding it here has Google ready before the first press.
+        VoiceRepair.resync(app);
         if (unlockReceiver != null) {
             app.unregisterReceiver(unlockReceiver);
             unlockReceiver = null;
@@ -182,7 +188,7 @@ final class BootRecovery {
         private final ContentObserver observer = new ContentObserver(handler) {
             @Override public void onChange(boolean selfChange) { check("settings", false); }
         };
-        private boolean attempted;
+        private int attempts;
         private boolean notified;
         private String lastState;
 
@@ -214,11 +220,11 @@ final class BootRecovery {
                     lastState = state;
                 }
                 // ColorOS removes our service from the list. A temporary master-switch change before binding can
-                // precede that removal and must leave the one restore attempt available.
-                if (!registered && !attempted && age < WINDOW_MS && wanted(app)) {
-                    attempted = true;
+                // precede that removal and must leave the restore attempts available.
+                if (!registered && attempts < RESTORE_ATTEMPTS && age < WINDOW_MS && wanted(app)) {
+                    attempts++;
                     boolean submitted = restore(app);
-                    Log.i(TAG, "Accessibility restore submitted=" + submitted);
+                    Log.i(TAG, "Accessibility restore " + attempts + "/" + RESTORE_ATTEMPTS + " submitted=" + submitted);
                     if (submitted) return;
                 }
                 if (!notified && (!registered || (deadline && (!enabled || !bound)))) {

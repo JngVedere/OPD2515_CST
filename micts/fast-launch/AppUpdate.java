@@ -13,6 +13,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.URL;
+import java.net.UnknownHostException;
 import java.nio.charset.StandardCharsets;
 import java.security.GeneralSecurityException;
 import java.security.MessageDigest;
@@ -70,6 +71,11 @@ final class AppUpdate {
             catch (java.io.FileNotFoundException none) { } // No beta published right now.
         }
         return pick(stable, beta);
+    }
+
+    static String checkFailureMessage(Exception error) {
+        if (error instanceof UnknownHostException) return "인터넷 연결을 확인해주세요";
+        return "업데이트 정보를 가져오지 못했습니다 (" + error.getClass().getSimpleName() + ").\n인터넷 연결을 확인해주세요.";
     }
 
     private static Release parse(byte[] metadata, long current) throws org.json.JSONException {

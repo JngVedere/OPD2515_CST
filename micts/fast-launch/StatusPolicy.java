@@ -50,10 +50,12 @@ final class StatusPolicy {
         return "0".equals(value) ? GESTURE_SHOWN : "1".equals(value) ? GESTURE_HIDDEN : GESTURE_UNKNOWN;
     }
 
+    static final String BAR_IN_USE = "사용 중";
+
     /** Bottom trigger (touch area or ColorOS bar) readiness, first failing prerequisite first. The gesture bar only matters natively. */
     static String bar(boolean approved, boolean enabled, boolean live, boolean nativeMode, boolean secureWrite, boolean breenoOff,
             boolean logsPermitted, boolean logActive, boolean logWaiting, boolean ready, boolean cts, int google, int gestureBar) {
-        if (!approved) return "접근성 설정 필요 · 접근성 설정에서 Circle-to-Search Trigger를 켜주세요";
+        if (!approved) return "접근성 설정 필요 · 접근성 설정에서 OpdCTS를 켜주세요";
         if (!enabled) return "꺼짐";
         if (!live) return "서비스 연결 대기 · 접근성 승인됨, 계속되면 접근성에서 껐다 다시 켜주세요";
         boolean buttons = gestureBar == GESTURE_BUTTONS;
@@ -70,7 +72,7 @@ final class StatusPolicy {
         if (cts && google != GOOGLE_READY) return where + " 감지 중 · 서클 투 서치: " + googleProblem(google);
         if (nativeMode && gestureBar != GESTURE_SHOWN && gestureBar != GESTURE_TASKBAR && !buttons)
             return where + " 감지 중 · 제스처 안내 막대가 보이는지 확인할 수 없습니다.\n설정 → 시스템 및 업데이트 → 시스템 탐색에서\n숨기기가 꺼져 있는지 확인해주세요";
-        return "사용 중 · " + where + " 감지 중" + (cts ? " · Google 설정됨, 실제 연결 상태는 확인 불가" : "")
+        return BAR_IN_USE + " · " + where + " 감지 중" + (cts ? " · Google 설정됨, 실제 연결 상태는 확인 불가" : "")
             + (nativeMode && gestureBar == GESTURE_TASKBAR ? " · 작업 표시줄 기준" : "")
             + (!nativeMode && buttons ? "\n3버튼 탐색에서 최근 앱 버튼을 가리면 터치 영역 위치를 옮겨주세요" : "");
     }
@@ -93,7 +95,7 @@ final class StatusPolicy {
             boolean active, long age) {
         if (!power) return "전원 버튼 옵션 꺼짐";
         if (!granted) return "접근성 승인 해제됨";
-        if (!interactive) return "화면 꺼짐 (앱은 화면을 깨우지 않음)";
+        if (!interactive) return "화면 꺼짐";
         if (locked && !lockedAllowed) return "잠금 상태 (잠금 화면 호출 옵션 꺼짐 또는 요청 중 변경)";
         if (!active) return "기기 로그 연결 끊김";
         if (age < 0 || age > LogTrigger.POWER_LAUNCH_AGE) return "요청 시간 초과 (" + age + "ms)";
@@ -110,6 +112,51 @@ final class StatusPolicy {
      */
     static boolean cleanupKill(int reason, String description, long at, long lockedAt) {
         return reason == EXIT_OTHER && description != null && description.contains("o-kill") && at > lockedAt;
+    }
+
+    private static final java.util.regex.Pattern OPLUS_KILL = java.util.regex.Pattern.compile("o-(kill|stop)\\((\\d{1,4})\\)");
+
+    /**
+     * 최근 실행 기록's diagnosis line for the newest ApplicationExitInfo of this app. ColorOS cleanups (reason 13) carry
+     * "o-kill(N)": N is Athena's clean type (device, Athena.apk v1.a table, 2026-11-28: 2 one-key clean = 모두 닫기,
+     * 40 swipe-up clean = recents card, 32/33/392 low-memory clean, 3 deep clean, 1/24 screen-off/on clean, 37/38 super
+     * power saving, 5/6/17 GuardElf background management). The raw code stays in parentheses for reports.
+     */
+    static String exitLabel(int reason, String description) {
+        if (reason == EXIT_OTHER && description != null) {
+            java.util.regex.Matcher m = OPLUS_KILL.matcher(description);
+            if (m.find()) {
+                String code = "o-" + m.group(1) + " " + m.group(2);
+                if ("stop".equals(m.group(1))) return "ColorOS가 앱을 중지함 (" + code + ")";
+                switch (Integer.parseInt(m.group(2))) {
+                    case 2: return "최근 앱 '모두 닫기' (" + code + ")";
+                    case 40: return "최근 앱에서 이 앱 카드를 닫음 (" + code + ")";
+                    case 32: case 33: case 392: return "메모리 부족 정리 (" + code + ")";
+                    case 3: return "딥 클린 정리 (" + code + ")";
+                    case 1: case 24: case 37: case 38: return "절전·화면 정리 (" + code + ")";
+                    case 5: case 6: case 17: return "백그라운드 관리 정리 (" + code + ")";
+                    default: return "ColorOS 정리 (" + code + ")";
+                }
+            }
+        }
+        switch (reason) {
+            case 1: return "앱이 스스로 종료";
+            case 2: return "시스템 신호로 종료";
+            case 3: return "메모리 부족 (Android)";
+            case 4: case 5: return "앱 오류";
+            case 6: return "응답 없음 (ANR)";
+            case 7: return "초기화 실패";
+            case 8: return "권한 변경";
+            case 9: return "리소스 과다 사용";
+            case 10: return "강제 종료";
+            case 11: return "사용자가 중지";
+            case 12: return "연결된 프로세스 종료";
+            case EXIT_OTHER: return "시스템이 종료";
+            case 14: return "동결 중 종료";
+            case 15: return "앱 상태 변경";
+            case 16: return "앱 업데이트";
+            default: return "기타 (사유 " + reason + ")";
+        }
     }
 
     /** Starts the newest record for one pathway; any older record (and its late callbacks) is superseded. */

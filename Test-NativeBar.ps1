@@ -72,6 +72,10 @@ public final class LogTriggerHarness {
         check(!StatusPolicy.cleanupKill(13, "o-kill(2)", 2000, 3000), "A kill before the user locked the card is not reported");
         check(!StatusPolicy.cleanupKill(16, "stop due to killDueToPackageUpdate", 2000, 0), "Package updates are not cleanup kills");
         check(!StatusPolicy.cleanupKill(13, null, 2000, 0) && !StatusPolicy.cleanupKill(13, "lmk", 2000, 0), "Other system kills are not cleanup kills");
+        check(StatusPolicy.exitLabel(13, "[UNKNOWN] o-kill(40)").endsWith("(o-kill 40)") && StatusPolicy.exitLabel(13, "o-stop(2)").endsWith("(o-stop 2)"), "Diagnosis keeps the ColorOS kill code");
+        check(StatusPolicy.exitLabel(13, "o-kill(33)").equals(StatusPolicy.exitLabel(13, "o-kill(392)").replace("392", "33")), "Low-memory clean types share one label");
+        check(!StatusPolicy.exitLabel(13, "o-kill(2)").equals(StatusPolicy.exitLabel(13, "o-kill(40)").replace("40", "2")), "Clear-all and card swipe are told apart");
+        check(StatusPolicy.exitLabel(13, null).equals(StatusPolicy.exitLabel(13, "lmk")) && StatusPolicy.exitLabel(99, null).contains("99"), "Plain system kills and unknown reasons stay readable");
 
         // Observed OPD2515 after recents "clear all": system_server UserAwareMgr INFO line for Google's :interactor.
         String gsa = "com.google.android.googlequicksearchbox", killTag = "UserAwareMgr";
@@ -123,8 +127,8 @@ public final class LogTriggerHarness {
         for (String bad : new String[]{null, "", " ", ".", "..", "1..2", "1.2.3", "-1", "-0", "+1", "10.01", "10.1", "11", "99", "100",
                 "0.001", "1.234", "1,5", "1e1", "0x1", "NaN", "Infinity", "1 2", "１", "١", "²", "1\u0000", "abc", "1.5x"})
             check(TouchArea.typedScale(bad) == null, "Scale rejected: " + (bad == null ? "null" : bad.codePoints().mapToObj(Integer::toHexString).toList()));
-        check(TouchArea.MIN_HOLD == 50 && TouchArea.hold(10) == 50 && TouchArea.hold(-5) == 50 && TouchArea.hold(50) == 50
-            && TouchArea.hold(5000) == TouchArea.MAX_HOLD && TouchArea.hold(420) == 420, "Hold time is bounded (50-1000 ms)");
+        check(TouchArea.MIN_HOLD == 100 && TouchArea.hold(10) == 100 && TouchArea.hold(-5) == 100 && TouchArea.hold(50) == 100 && TouchArea.hold(100) == 100 && TouchArea.WARN_HOLD == 150
+            && TouchArea.hold(5000) == TouchArea.MAX_HOLD && TouchArea.hold(420) == 420, "Hold time is bounded (100-1000 ms, warning below 150 ms)");
         check(TouchArea.settle(-1) == 0 && TouchArea.settle(99999) == TouchArea.MAX_SETTLE, "Gemini wait is bounded");
         // Update alert: at most one GitHub check per 24 h; never stuck when the clock moves backwards.
         long day = StatusPolicy.UPDATE_INTERVAL, t0 = 1_800_000_000_000L;

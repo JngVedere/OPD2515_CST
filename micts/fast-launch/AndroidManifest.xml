@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="dev.padhelper.fastcts">
-    <!-- Optional alerts (settings -> 알림, both off by default): missing device-log access and a new version. Asked for
-         only when the user turns one on; never a persistent or foreground notification. -->
+    <!-- Optional alerts (settings -> 알림): missing device-log access and a new version. Requested on first launch
+         or when enabling an alert in settings. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- Android 16 Live Updates (normal permission): only for the opt-in camera-island form of the device-log notice. -->
     <uses-permission android:name="android.permission.POST_PROMOTED_NOTIFICATIONS" />
@@ -32,7 +32,7 @@
             <category android:name="android.intent.category.LAUNCHER" />
         </intent>
     </queries>
-    <application android:label="Circle-to-Search Trigger"
+    <application android:label="@string/app_name"
         android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher_round"
         android:allowBackup="false" android:theme="@style/TransparentTrigger">
         <receiver android:name=".BootReceiver" android:exported="false" android:directBootAware="true">
@@ -50,7 +50,7 @@
             android:theme="@android:style/Theme.NoDisplay"
             android:excludeFromRecents="true" android:noHistory="true" android:taskAffinity="" />
         <activity-alias android:name=".DrawerLaunch" android:targetActivity=".DrawerActivity"
-            android:enabled="true" android:exported="true" android:label="OpdCTS"
+            android:enabled="true" android:exported="true" android:label="@string/app_name"
             android:excludeFromRecents="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -75,7 +75,7 @@
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
         </activity>
-        <service android:name=".BarService" android:exported="true"
+        <service android:name=".BarService" android:exported="true" android:label="@string/app_name"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
             <intent-filter>
                 <action android:name="android.accessibilityservice.AccessibilityService" />

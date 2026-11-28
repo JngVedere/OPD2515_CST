@@ -51,6 +51,20 @@ public final class BarService extends AccessibilityService {
      */
     private final LogTrigger.Warm warmTiming = new LogTrigger.Warm();
     private boolean warmOnScreen;
+    /**
+     * Circle to Search around a Google kill. Device (OPD2515, 2026-11-28, recents "모두 닫기" with Google in recents):
+     * ColorOS kills Google's :interactor, the system restarts the voice service by itself ~0.1 s later, and the warm-up
+     * rebind follows ~0.23 s after the kill. A request sent just before the kill, or between the kill and the warm-up,
+     * opened nothing (3/3); without the rebind, 0.3 s or more after the kill it opened normally (3/3), and 0.09 s after it
+     * captured the half-closed recents screen. So: a request within KILL_SETTLE of a kill (or during a rebind) waits; a
+     * request that a kill follows within CTS_KILL_WINDOW is sent once more after KILL_SETTLE; and the warm-up rebind
+     * waits until CTS_GUARD after a request instead of cutting the session that just opened (main thread only).
+     */
+    private static final long KILL_SETTLE = 400, CTS_KILL_WINDOW = 1000, CTS_GUARD = 1500, BUSY_RETRY = 120;
+    private long googleKilledAt = Long.MIN_VALUE / 2, ctsAt = Long.MIN_VALUE / 2;
+    private boolean ctsRetryArmed, ctsTwice;
+    private String ctsRecord;
+    private long ctsAttempt;
     /** Newest attempt per pathway only (StatusPolicy records); main thread only. */
     static final String LAST_BAR = "last_bar", LAST_POWER = "last_power", LAST_DOUBLE = "last_double";
     private static final String POWER_INPUT = "전원 버튼 길게 누르기 (기기 로그)";
@@ -238,6 +252,8 @@ public final class BarService extends AccessibilityService {
      * silently refuses new requests for about a minute (DECLINE_COOLDOWN), so a retry before then shows nothing.
      */
     static final String LOG_DENIED_AT = "log_denied_at", LOG_DENIALS = "log_denials";
+    /** Wall time of the last drop of a working device-log session (e.g. game mode froze this app), for diagnosis. */
+    static final String LOG_LOST_AT = "log_lost_at";
     /** Device (0.4.1-patch2): requests at +64 s after a refusal were still refused silently, +73 s showed the dialog. */
     static final long DECLINE_COOLDOWN = 70_000;
 
@@ -484,7 +500,7 @@ public final class BarService extends AccessibilityService {
         Log.i("PadPower", "GeminiSession.launch returned " + started + " (request acceptance, window unverified)");
         // Press-to-request time in the record: if a press feels slow, the record shows whether the delay was on this side.
         if (started) attemptUpdate(this, LAST_POWER, powerAttempt, StatusPolicy.ACCEPTED,
-            rebound + " · 시스템이 Gemini 세션 요청을 수락함 (누름 후 " + (SystemClock.elapsedRealtime() - since)
+            rebound + " · Gemini 요청을 전달됨 (누름 후 " + (SystemClock.elapsedRealtime() - since)
                 + "ms) · Gemini Assistant 창 표시는 확인하지 않음");
         else attemptUpdate(this, LAST_POWER, powerAttempt, StatusPolicy.FAILED, rebound + " · " + (!VoiceRepair.ready(rebind)
             ? "Gemini 요청 안 함" : googleVoice(this) == StatusPolicy.GOOGLE_READY ? "시스템이 Gemini 세션 요청을 수락하지 않음"
@@ -526,9 +542,31 @@ public final class BarService extends AccessibilityService {
      * Circle to Search target: the direct system call from this running service (no activity hop). Any other target, or a
      * refused direct call (MiCTS fallback), goes through MainActivity.
      */
-    private void launchTarget(String record, long attempt, boolean twice) {
+    private void launchTarget(String record, long attempt, boolean twice) { launchTarget(record, attempt, twice, 0); }
+
+    /** waits: how often this request already waited; the kill settle applies to the first try, a running rebind up to 3 times. */
+    private void launchTarget(String record, long attempt, boolean twice, int waits) {
         boolean cts = MainActivity.cts(prefs(this).getString(twice ? POWER_DOUBLE_TARGET : MainActivity.TARGET_COMPONENT, ""));
+        if (cts && waits < 3) {
+            long settle = waits == 0 ? googleKilledAt + KILL_SETTLE - SystemClock.elapsedRealtime() : 0;
+            long wait = Math.max(settle, VoiceRepair.busy() ? BUSY_RETRY : 0);
+            if (wait > 0) {
+                Log.i("PadCts", "Circle to Search waits " + wait + "ms for Google to restart");
+                handler.postDelayed(() -> {
+                    if (instance != this) return;
+                    // The screen may have gone off or locked meanwhile: no Circle to Search, and no MiCTS fallback, there.
+                    if (!unlockedScreen()) {
+                        attemptUpdate(this, record, attempt, StatusPolicy.CANCELLED, "대기 중 화면이 꺼지거나 잠겨 실행 취소");
+                        return;
+                    }
+                    launchTarget(record, attempt, twice, waits + 1);
+                }, wait);
+                return;
+            }
+        }
         if (cts && CtsSession.open(this)) {
+            ctsAt = SystemClock.elapsedRealtime();
+            ctsRetryArmed = true; ctsRecord = record; ctsAttempt = attempt; ctsTwice = twice;
             attemptUpdate(this, record, attempt, StatusPolicy.ACCEPTED, MainActivity.CTS_ACCEPTED);
             return;
         }
@@ -561,7 +599,7 @@ public final class BarService extends AccessibilityService {
             if (instance != BarService.this || !logsWanted(BarService.this) || !logsPermitted(BarService.this)
                     || logs.state() == LogSession.ACTIVE) return;
             if (bridgeShowing() || logs.state() == LogSession.CONNECTING) { handler.postDelayed(this, LOG_CHECK_DELAY); return; }
-            Alerts.logMissing(BarService.this, true, "기기 로그 승인이 필요합니다", "ColorOS 기본 바·전원 버튼 실행이 멈춰 있습니다. 눌러서 승인해주세요.");
+            Alerts.logMissing(BarService.this, true, "기기 로그 승인이 필요합니다", "OpdCTS의 작동이 멈췄습니다. 눌러서 승인해주세요.");
         }
     };
     /**
@@ -615,6 +653,7 @@ public final class BarService extends AccessibilityService {
                 handler.postDelayed(logCheck, DECLINE_COOLDOWN + RETRY_NOTICE_GAP);
             }
             else if (logsWanted(BarService.this) && logWasActive && state == LogSession.OFF) {
+                bar.edit().putLong(LOG_LOST_AT, System.currentTimeMillis()).apply(); // 최근 실행 기록 diagnosis line
                 Alerts.logMissing(BarService.this, true, "기기 로그 연결이 끊겼습니다", "ColorOS 기본 바·전원 버튼 실행이 멈췄습니다. 눌러서 다시 승인해주세요.");
                 handler.removeCallbacks(recoverPrompt);
                 if (fastRecover(BarService.this)) handler.postDelayed(recoverPrompt, RECOVER_DELAY);
@@ -670,6 +709,19 @@ public final class BarService extends AccessibilityService {
 
     /** Google's :interactor was killed: restart it now (or at the next screen on) so the next power press is not cold. */
     private void googleDied() {
+        long now = SystemClock.elapsedRealtime();
+        googleKilledAt = now;
+        // The session of a request sent just before this kill died with it: ask once more after Google is back.
+        if (ctsRetryArmed && now - ctsAt <= CTS_KILL_WINDOW) {
+            ctsRetryArmed = false;
+            String record = ctsRecord; long attempt = ctsAttempt; boolean twice = ctsTwice;
+            Log.i("PadCts", "Google killed " + (now - ctsAt) + "ms after Circle to Search: asking again in " + KILL_SETTLE + "ms");
+            handler.postDelayed(() -> {
+                if (instance != this || !unlockedScreen()) return;
+                launchTarget(record, attempt, twice, 1); // the settle already passed; only a running rebind still waits
+                ctsRetryArmed = false; // once per request: a further kill does not start another round
+            }, KILL_SETTLE);
+        }
         if (!getSystemService(PowerManager.class).isInteractive()) { warmOnScreen = true; return; }
         scheduleWarm(warmTiming.googleDied(SystemClock.elapsedRealtime()));
     }
@@ -687,6 +739,12 @@ public final class BarService extends AccessibilityService {
     }
 
     private final Runnable warm = () -> {
+        long sinceCts = SystemClock.elapsedRealtime() - ctsAt;
+        if (sinceCts < CTS_GUARD) { // a rebind now would cut the Circle to Search session that just opened
+            Log.i("PadVoice", "warm-up postponed " + (CTS_GUARD - sinceCts) + "ms: Circle to Search just requested");
+            handler.postDelayed(this.warm, CTS_GUARD - sinceCts);
+            return;
+        }
         warmOnScreen = false;
         if (instance != this || !power(this) || powerPending || !VoiceRepair.activationWanted(this, true)) {
             warmTiming.cancel();
@@ -796,6 +854,7 @@ public final class BarService extends AccessibilityService {
         appWindows = getApplicationContext().getSystemService(WindowManager.class);
         VoiceRepair.recover(this); // A voice rebind interrupted by process death restores the exact original selection.
         Tweaks.reapply(this); // ColorOS resets some of them (clock seconds) at boot
+        Tweaks.watchRefreshRate(this);
         int systemUi;
         try { systemUi = getPackageManager().getApplicationInfo("com.android.systemui", 0).uid; }
         catch (PackageManager.NameNotFoundException missing) { systemUi = -1; } // Bar events then never match.
@@ -864,7 +923,10 @@ public final class BarService extends AccessibilityService {
     }
 
     private void configure() {
-        if (bound) { unsubscribe(); unkeep(); } else keep();
+        if (bound) unsubscribe();
+        // Both modes (see keeper): accessibility overlay while bound, app overlay in overlay mode. Only while a feature
+        // still runs (bar or the log-driven power functions); after 끄기 with nothing left, no window is kept.
+        if (enabled(this) || logsWanted(this)) keep(); else unkeep();
         running = enabled(this);
         handler.removeCallbacks(restoreTarget);
         handler.removeCallbacks(longPress);
@@ -913,7 +975,7 @@ public final class BarService extends AccessibilityService {
         if (!enabled(this) || nativeNow() || !granted(this) || instance != this || !unlockedScreen()) return;
         if (target != null) { BarGesture.disableBreenoGesture(this); return; }
         View view = new View(this);
-        view.setContentDescription("Circle-to-Search Trigger 길게 누르기 영역");
+        view.setContentDescription(getApplicationInfo().loadLabel(getPackageManager()) + " 길게 누르기 영역");
         int slop = ViewConfiguration.get(this).getScaledTouchSlop();
         view.setOnTouchListener((v, event) -> {
             switch (event.getActionMasked()) {
@@ -1002,27 +1064,37 @@ public final class BarService extends AccessibilityService {
     }
 
     /**
-     * Overlay mode: a 1x1 transparent, untouchable overlay. Device: with "다른 앱 위에 표시", a background start (approval
-     * prompt, other target apps) is let through only while an overlay of this app is visible, and the process stays
-     * perceptible (adj 200). Needed in the ColorOS-bar and power-only setups, which have no touch area.
+     * A 1x1 transparent, untouchable window, in both modes. Needed in the ColorOS-bar and power-only setups, which have
+     * no touch area.
+     * Overlay mode (app overlay, "다른 앱 위에 표시"): a background start (approval prompt, other target apps) is let
+     * through only while an overlay of this app is visible, and the process stays perceptible (adj 200).
+     * Accessibility mode (accessibility overlay, no permission): ColorOS Hans treats an app with a system window as
+     * important (OplusHansImportance case 2, "float window"), while its accessibility-app check can be skipped at higher
+     * strict-mode levels. Device: game mode froze this app in the ColorOS-bar mode (the device log dropped) but not while
+     * the touch area was shown; this window gives the bar mode the same standing (not reproduced on the test tablet).
      */
     private View keeper;
+    private boolean keeperBound;
 
     private void keep() {
-        if (keeper != null || !Settings.canDrawOverlays(this)) return;
-        WindowManager.LayoutParams p = new WindowManager.LayoutParams(1, 1, WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+        if (keeper != null && keeperBound == bound) return;
+        unkeep(); // the mode changed: the window type has to follow
+        if (!bound && !Settings.canDrawOverlays(this)) return;
+        WindowManager.LayoutParams p = new WindowManager.LayoutParams(1, 1,
+            bound ? WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY : WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
                 | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN, PixelFormat.TRANSLUCENT);
         p.gravity = Gravity.TOP | Gravity.LEFT;
         p.setTitle("PadKeeper");
         View view = new View(this);
-        try { appWindows.addView(view, p); keeper = view; }
+        try { (bound ? windows : appWindows).addView(view, p); keeper = view; keeperBound = bound; }
         catch (RuntimeException error) { Log.w("PadBar", "keeper overlay unavailable", error); }
     }
 
     private void unkeep() {
         if (keeper == null) return;
-        try { appWindows.removeViewImmediate(keeper); } catch (IllegalArgumentException ignored) { }
+        // RuntimeException: after an unbind the accessibility window may already be gone with its token.
+        try { (keeperBound ? windows : appWindows).removeViewImmediate(keeper); } catch (RuntimeException ignored) { }
         keeper = null;
     }
 
