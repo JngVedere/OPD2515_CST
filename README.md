@@ -178,7 +178,7 @@ powershell -NoProfile -Command "irm https://raw.githubusercontent.com/JngVedere/
 
 </details>
 <details>
-<summary><b>MacOS / Linux</b></summary>
+<summary><b>(Experimental) MacOS, Linux</b></summary>
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/JngVedere/OPD2515_CST/main/scripts/adb_setup.sh | bash
