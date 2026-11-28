@@ -147,8 +147,8 @@ ColorOS 기본 하단 바와 전원 버튼 Gemini를 함께 사용하려는 경�
 
 ### 준비물
 
-- OpdCTS가 설치된 태블릿
-- Windows PC
+- OpdCTS가 설치된 Oppo pad mini
+- PC 또는 Laptop | Windows, Linux, MacOS-Intel, MacOS-Apple Silicon
 - [Android Platform Tools (ADB)](https://developer.android.com/tools/releases/platform-tools)
 - USB 디버깅이 활성화된 기기
 
@@ -158,7 +158,7 @@ ADB가 PATH에 등록되어 있거나 PowerShell에서 실행할 수 있어야 �
 
 1. 태블릿의 **개발자 옵션 → USB 디버깅**을 활성화합니다.
 2. 태블릿을 PC에 연결하고 **USB 디버깅을 허용** 합니다.
-3. 다음 터미널 중 하나를 실행하여 명령어를 입력합니다.
+3. 다음 PC OS에 따라 다음 중 하나를 터미널에 실행합니다.
 
 <details open>
 <summary><b>Windows PowerShell</b></summary>
@@ -177,12 +177,18 @@ powershell -NoProfile -Command "irm https://raw.githubusercontent.com/JngVedere/
 ```
 
 </details>
+<details>
+<summary><b>MacOS / Linux</b></summary>
 
-4. 개발자 옵션에서 **Disable system optimization**을 활성화한 뒤 PowerShell에서 Enter를 누릅니다.
-5. 기기 로그 접근 허용 팝업에서 **일회성 액세스 허용**을 선택합니다. 팝업이 나타나지 않으면 앱의 로그 연결 안내를 눌러 주세요.
-6. PowerShell에서 Enter를 누릅니다. 자동 설정이 완료되면 Google 어시스턴트의 최초 호출을 시도합니다.
-7. **설정 → 앱 → 자동 실행**에서 Circle-to-Search Trigger를 허용합니다.
-8. OpdCTS 설정에서 **최근 앱 정리 제외 설정**을 열고 앱 카드를 잠급니다.
+```bash
+curl -fsSL https://raw.githubusercontent.com/JngVedere/OPD2515_CST/main/scripts/adb_setup.sh | bash
+```
+
+</details>
+
+4. 터미널에 뜨는 안내에 따라 설정을 진행합니다.
+5. **설정 → 앱 → 자동 실행**에서 Circle-to-Search Trigger를 허용합니다.
+6. OpdCTS 설정에서 **최근 앱 정리 제외 설정**을 열고 앱 카드를 잠급니다.
 
 위 절차를 모두 완료하면 설정이 끝납니다.
 
