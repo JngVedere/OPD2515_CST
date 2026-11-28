@@ -158,11 +158,25 @@ ADB가 PATH에 등록되어 있거나 PowerShell에서 실행할 수 있어야 �
 
 1. 태블릿의 **개발자 옵션 → USB 디버깅**을 활성화합니다.
 2. 태블릿을 PC에 연결하고 **USB 디버깅을 허용** 합니다.
-3. **Windows PowerShell** 에서 다음 명령어를 실행합니다.
+3. 다음 터미널 중 하나를 실행하여 명령어를 입력합니다.
+
+<details open>
+<summary><b>Windows PowerShell</b></summary>
 
 ```powershell
 irm https://raw.githubusercontent.com/JngVedere/OPD2515_CST/main/scripts/adb_setup.ps1 | iex
 ```
+
+</details>
+
+<details>
+<summary><b>Windows CMD</b></summary>
+
+```cmd
+powershell -NoProfile -Command "irm https://raw.githubusercontent.com/JngVedere/OPD2515_CST/main/scripts/adb_setup.ps1 | iex"
+```
+
+</details>
 
 4. 개발자 옵션에서 **Disable system optimization**을 활성화한 뒤 PowerShell에서 Enter를 누릅니다.
 5. 기기 로그 접근 허용 팝업에서 **일회성 액세스 허용**을 선택합니다. 팝업이 나타나지 않으면 앱의 로그 연결 안내를 눌러 주세요.
