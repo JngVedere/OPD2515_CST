@@ -12,7 +12,7 @@ OpdCTS는 ColorOS에서 Google Circle to Search와 Gemini Assistant를 편리하
 - 상주 알림 및 백그라운드 폴링 없이 동작
 - 설정 화면을 닫은 상태에서 약 50MB의 메모리 사용량
 
-**[최신 버전 다운로드](https://github.com/JngVedere/OPD2515_CST/releases/latest)** · [변경 사항](./RELEASES.md) · [문제 제보](https://github.com/JngVedere/OPD2515_CST/issues)
+**[최신 버전 다운로드](https://github.com/JngVedere/OPD2515_CST/releases/latest)** · [변경 사항](./RELEASES.md) · [문제 제보](https://github.com/JngVedere/OPD2515_CST/issues) · [설치 방법](https://github.com/JngVedere/OPD2515_CST#5-%EC%84%A4%EC%B9%98)
 
 > OPPO Pad Mini(OPD2515)에서 동작을 검증했습니다. 다른 기기 및 펌웨어에서의 정상 작동은 보장하지 않습니다.
 
